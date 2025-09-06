@@ -1,0 +1,1 @@
+select *, headers, url from fetch where url = 'https://sqlite-fetch.dev';

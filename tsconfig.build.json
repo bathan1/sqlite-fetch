@@ -1,0 +1,40 @@
+{
+    "compilerOptions": {
+        "target": "ES2020",
+        "useDefineForClassFields": true,
+        "module": "ESNext",
+        "lib": ["ESNext", "DOM", "DOM.Iterable", "webworker"],
+        "skipLibCheck": true,
+        "types": ["vite/client", "@types/node"],
+
+        /* Bundler mode */
+        "moduleResolution": "bundler",
+        "isolatedModules": true,
+        "moduleDetection": "force",
+        "allowImportingTsExtensions": true,
+        "noEmit": false,
+        "declaration": true,
+        "emitDeclarationOnly": true,
+        "outDir": "./dist",
+
+        /* Linting */
+        "strict": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noFallthroughCasesInSwitch": true,
+
+        /* custom */
+        "baseUrl": ".",
+        "paths": {
+            "~/*": ["src/*"]
+        }
+    },
+    "include": [
+        "src/index.ts",
+        "src/wasm.ts",
+        "src/wasm.node.ts"
+    ],
+    "exclude": [
+        "/**/*.test.ts"
+    ]
+}

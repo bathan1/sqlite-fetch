@@ -1,0 +1,20 @@
+/definitions/
+/generated/
+/synthea-data/
+/_defs/
+**/build
+*.db
+.next
+*.tgz
+/package/
+/coverage/
+/.vscode
+/docs/.vitepress/cache
+/node_modules/
+
+# clang
+.cache
+*.so
+
+# python
+**/__pycache__
