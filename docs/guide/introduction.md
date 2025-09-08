@@ -12,7 +12,7 @@ If you are familiar with the `fetch` API, then you already know how to use SQLit
 
 <<< ../examples/sql/select_where.sql
 
-The Fetch virtual table is implemented as [eponymous-only](https://www.sqlite.org/vtab.html#eponymous_virtual_tables)
+The Fetch virtual table is implemented as [eponymous-only](https://www.sqlite.org/vtab.html#eponymous_virtual_tables).
 To read the `url` and the `headers` columns, you need to explicitly select them:
 
 <<< ../examples/sql/select_all_and_hidden.sql
@@ -23,7 +23,17 @@ So you can call them using the table valued function sugar as well:
 <<< ../examples/sql/select_tvf.sql
 
 ## POST
-`POST` calls are made using an INSERT query.
+`POST` calls are made using an INSERT query. Set the endpoint to `POST` to using the `url` column,
+and the data to write using the `body` column:
+
+<<< ../examples/sql/insert.sql
+
+## PUT / PATCH
+`PUT` and `PATCH` calls are made using an UPDATE query. By default, a `PUT` request is sent through.
+
+<<< ../examples/sql/update.sql
+
+Set the `type` column to 
 
 ## See Also
 Here are some projects I found that were either direct inspirations
