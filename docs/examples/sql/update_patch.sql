@@ -5,4 +5,4 @@ update fetch set
         'title', 'Hello SQLite Fetch',
         'description', 'Can I fetch that?'
     )
-where url = 'https://jsonplaceholder.typicode.com/posts/1' and type = 'PATCH'
+where url = 'https://jsonplaceholder.typicode.com/posts/1' and type = 'PATCH';

@@ -23,7 +23,7 @@ So you can call them using the table valued function sugar as well:
 <<< ../examples/sql/select_tvf.sql
 
 ## POST
-`POST` calls are made using an INSERT query. Set the endpoint to `POST` to using the `url` column,
+`POST` calls are made using an INSERT query. Set the endpoint with the `url` column,
 and the data to write using the `body` column:
 
 <<< ../examples/sql/insert.sql
@@ -33,14 +33,21 @@ and the data to write using the `body` column:
 
 <<< ../examples/sql/update.sql
 
-Set the `type` column to 
+Set the `type` column to 'patch' if you want to make it a `PATCH` request:
+
+
+<<< ../examples/sql/update_patch.sql
+
+## DELETE
+`DELETE` calls are made using a DELETE query:
+
+<<< ../examples/sql/delete.sql
 
 ## See Also
 Here are some projects I found that were either direct inspirations
 or just happened to have overlapping solutions...
 
-1. [`sqlite-http`](https://github.com/asg017/sqlite-http):
-This is probably the most similar project. `sqlite-http` provides more granular
-functions to make HTTP requests and isn't based on Web APIs, while SQLite Fetch's `fetch` 
-is the only way to interact with HTTP requests, and *is* roughly modeled after
-the Web API interface.
+1. [`sqlite-http`](https://github.com/asg017/sqlite-http): 
+Very similiar functionally, but API / design wise, `sqlite-http` represents
+HTTP Responses as scalar, while `sqlite-fetch` represents an HTTP Response
+as a row.

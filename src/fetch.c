@@ -151,13 +151,13 @@ typedef struct {
     "CREATE TABLE fetch ("                                                     \
     "body BLOB,"           /* 0 */                                             \
     "body_used INT,"       /* 1 */                                             \
-    "headers TEXT HIDDEN," /* 2 */                                             \
-    "ok INT,"              /* 3 */                                             \
-    "redirected INT,"      /* 4 */                                             \
-    "status INT,"          /* 5 */                                             \
-    "status_text TEXT,"    /* 6 */                                             \
-    "type TEXT,"           /* 7 */                                             \
-    "url TEXT HIDDEN"      /* 8 */                                             \
+    "ok INT,"              /* 2 */                                             \
+    "redirected INT,"      /* 3 */                                             \
+    "status INT,"          /* 4 */                                             \
+    "status_text TEXT,"    /* 5 */                                             \
+    "type TEXT,"           /* 6 */                                             \
+    "url TEXT HIDDEN,"      /* 7 */                                             \
+    "headers TEXT HIDDEN" /* 8 */                                             \
     ");"
 
 // #endregion fetch_schema
@@ -166,13 +166,13 @@ typedef struct {
 
 #define FETCH_BODY 0
 #define FETCH_BODY_USED 1
-#define FETCH_HEADERS 2
-#define FETCH_OK 3
-#define FETCH_REDIRECTED 4
-#define FETCH_STATUS 5
-#define FETCH_STATUS_TEXT 6
-#define FETCH_TYPE 7
-#define FETCH_URL 8
+#define FETCH_OK 2
+#define FETCH_REDIRECTED 3
+#define FETCH_STATUS 4
+#define FETCH_STATUS_TEXT 5
+#define FETCH_TYPE 6
+#define FETCH_URL 7
+#define FETCH_HEADERS 8
 
 static char *build_schema_from_args(sqlite3 *db, int argc,
                                     const char *const *argv) {
@@ -244,17 +244,9 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
 // to a `"resource" = 'somevalue'` clause in tvf call fetch('resourceURL')
 // or its full select query equivalent.
 static int
-is_resource_eq_index_constraint(struct sqlite3_index_constraint *cst) {
-    return (cst->iColumn == 0 && cst->op == SQLITE_INDEX_CONSTRAINT_EQ &&
+is_cst_url_eq(struct sqlite3_index_constraint *cst) {
+    return (cst->iColumn == FETCH_URL && cst->op == SQLITE_INDEX_CONSTRAINT_EQ &&
             cst->usable);
-}
-
-/// Checks if the given index `cst` corresponds to an EQ (=) clause on
-/// the `"options"` column.
-static int
-is_options_eq_index_constraint(struct sqlite3_index_constraint *cst) {
-    return cst->iColumn == 1 && cst->op == SQLITE_INDEX_CONSTRAINT_EQ &&
-           cst->usable;
 }
 
 // expected bitmask value of the index_info from xBestIndex for tvf
@@ -271,7 +263,7 @@ static int check_plan_mask(struct sqlite3_index_info *index_info,
     for (int i = 0; i < index_info->nConstraint; i++) {
         struct sqlite3_index_constraint *cst = &index_info->aConstraint[i];
 
-        if (cst->iColumn == 0) {
+        if (cst->iColumn == FETCH_URL) {
             // User passed in a "resource" constraint, just not a usable one
             found_resource_constraint = 1;
             if (!cst->usable) {
@@ -302,15 +294,10 @@ static int x_best_index(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
         struct sqlite3_index_constraint_usage *usage =
             &pIdxInfo->aConstraintUsage[i];
 
-        if (is_resource_eq_index_constraint(cst)) {
+        if (is_cst_url_eq(cst)) {
             usage->omit = 1;
             usage->argvIndex = argPos++;
             planMask |= 0b01;
-        }
-
-        if (is_options_eq_index_constraint(cst)) {
-            usage->argvIndex = argPos++;
-            planMask |= 0b10;
         }
     }
 
@@ -398,15 +385,47 @@ static int x_rowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
     return SQLITE_OK;
 }
 
+typedef enum {
+    FETCH_METHOD_DELETE,
+    FETCH_METHOD_GET,
+    FETCH_METHOD_PATCH,
+    FETCH_METHOD_POST,
+    FETCH_METHOD_PUT
+} fetch_method_e;
+
+static CURL *fetch_curl_init(const char *url, fetch_method_e method, FILE *response_headers, FILE *response_body) {
+    CURL *curl = curl_easy_init();
+    if (!curl)
+        return NULL;
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, response_body);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, response_headers);
+
+    switch (method) {
+        case FETCH_METHOD_DELETE:
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+            break;
+        case FETCH_METHOD_GET:
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "GET");
+            break;
+        case FETCH_METHOD_PATCH:
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PATCH");
+            break;
+        case FETCH_METHOD_POST:
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
+            break;
+        case FETCH_METHOD_PUT:
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+            break;
+        default:
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "GET");
+    }
+    return curl;
+}
+
 static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
                     int argc, sqlite3_value **argv) {
-    if (argc < 1 || argc > 2)
-        return SQLITE_ERROR;
-
-    if (!cur || !cur->pVtab)
-        return SQLITE_ERROR;
-
-    if ((index & REQUIRED_BITS) != REQUIRED_BITS)
+    if (argc < 1 || argc > 2 || !cur || !cur->pVtab || ((index & REQUIRED_BITS) != REQUIRED_BITS))
         return SQLITE_ERROR;
 
     Fetch *tbl = (Fetch *)cur->pVtab;
@@ -418,19 +437,13 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
     strmap_t *headers =
         argc > 1 ? sqlite3_value_pointer(argv[1], "Headers") : NULL;
 
-    CURL *curl = curl_easy_init();
-    if (!curl)
-        return SQLITE_NOMEM;
-
     // mem2 -- fetch() response memory buffers
     char *__resp_headers = malloc(1);
     size_t resp_headers_size = 0;
     FILE *resp_headers = open_memstream(&__resp_headers, &resp_headers_size);
 
-    if (!resp_headers) {
-        curl_easy_cleanup(curl);
+    if (!resp_headers)
         return ENOMEM;
-    }
 
     char *__resp_body = malloc(1);
     size_t resp_body_size = 0;
@@ -439,15 +452,10 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
 
     if (!resp_body) {
         fclose(resp_headers);
-        curl_easy_cleanup(curl);
         return ENOMEM;
     }
 
-    curl_easy_setopt(curl, CURLOPT_URL, req_url);
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "GET");
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, resp_body);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, resp_headers);
-
+    CURL *curl = fetch_curl_init(req_url, FETCH_METHOD_GET, resp_headers, resp_body);
     curl_easy_perform(curl);
 
     // Write out bytes to __resp_headers and __resp_body
@@ -498,6 +506,8 @@ static int x_update(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv,
                 sqlite3_mprintf("fetch.xUpdate: no url to INSERT INTO (lol)");
             return SQLITE_MISUSE;
         }
+        const unsigned char *url = sqlite3_value_text(argv[FETCH_URL + X_UPDATE_OFFSET]);
+        printf("%s\n", url);
 
         // request_t post = {.url = sqlite3_value_text(argv[FETCH_COLUMN_URL]),
         //                   .method = "POST"};
@@ -532,7 +542,7 @@ static sqlite3_module sqlite_fetch = {0,            // iVersion
                                       NULL,         // xRollback
                                       NULL};
 
-// For runtime loadable
+// Runtime loadable entry
 int sqlite3_fetch_init(sqlite3 *db, char **pzErrMsg,
                        const sqlite3_api_routines *pApi) {
     SQLITE_EXTENSION_INIT2(pApi);
