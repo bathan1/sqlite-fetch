@@ -1,7 +1,3 @@
-.headers on
-.mode box
-.load ./libfetch.linux-x64
-
 select 
     b.value ->> 'userId' as "userId",
     b.value ->> 'id' as "id",

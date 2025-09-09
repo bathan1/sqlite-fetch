@@ -386,7 +386,6 @@ static int check_plan_mask(struct sqlite3_index_info *index_info,
 }
 
 static int x_best_index(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
-    printf("xBestIndex()\n");
     int argPos = 1;
     int planMask = 0;
 
@@ -422,7 +421,6 @@ static int x_disconnect(sqlite3_vtab *pvtab) {
 }
 
 static int x_open(sqlite3_vtab *pvtab, sqlite3_vtab_cursor **pp_cursor) {
-    printf("xOpen\n");
     fetch_cursor_t *cur = sqlite3_malloc(sizeof(fetch_cursor_t));
     if (!cur)
         return SQLITE_NOMEM;
@@ -633,7 +631,9 @@ static int x_update(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv,
     }
 
     if (X_UPDATE_IS_DELETE(argc, argv)) {
-        char *url = ((Fetch *) pVTab)->url;
+        printf("uhh\n");
+        const char *url = sqlite3_value_text(argv[0]);
+        printf("here?\n", url)
     }
 
     return SQLITE_OK;
