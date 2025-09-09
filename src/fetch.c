@@ -2,6 +2,7 @@
 #include <sqlite3ext.h>
 SQLITE_EXTENSION_INIT1
 
+#include <yyjson.h>
 #include <curl/curl.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -25,6 +26,114 @@ SQLITE_EXTENSION_INIT1
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #endif
 // ---------------------------------------------------------------------
+
+struct curl_slist *curl_slist_from_headers_json(char *json_obj_str) {
+    if (!json_obj_str) return NULL;
+
+    yyjson_read_err err;
+    yyjson_doc *doc = yyjson_read_opts(json_obj_str, strlen(json_obj_str), 0, NULL, &err);
+    if (!doc) {
+        // parse error; you could log err.code/err.msg
+        return NULL;
+    }
+
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (!yyjson_is_obj(root)) {
+        yyjson_doc_free(doc);
+        return NULL;
+    }
+
+    struct curl_slist *headers = NULL;
+
+    size_t idx, max;
+    yyjson_val *k, *v;
+    yyjson_obj_foreach(root, idx, max, k, v) {
+        const char *key = yyjson_get_str(k);
+        if (!key || !*key) continue;
+
+        // Convert value to string (NULL -> remove header)
+        char numbuf[64];
+        const char *val_cstr = NULL;
+        char *owned_val = NULL; // if we allocate
+
+        if (yyjson_is_str(v)) {
+            val_cstr = yyjson_get_str(v);
+        } else if (yyjson_is_null(v)) {
+            val_cstr = NULL; // means "Key:"
+        } else if (yyjson_is_bool(v)) {
+            val_cstr = yyjson_get_bool(v) ? "true" : "false";
+        } else if (yyjson_is_int(v)) {
+            snprintf(numbuf, sizeof(numbuf), "%lld", (long long)yyjson_get_sint(v));
+            val_cstr = numbuf;
+        } else if (yyjson_is_uint(v)) {
+            snprintf(numbuf, sizeof(numbuf), "%llu", (unsigned long long)yyjson_get_uint(v));
+            val_cstr = numbuf;
+        } else if (yyjson_is_real(v)) {
+            snprintf(numbuf, sizeof(numbuf), "%g", yyjson_get_real(v));
+            val_cstr = numbuf;
+        } else {
+            // For arrays/objects, either skip or serialize:
+            // owned_val = yyjson_write_opts(doc_for_v,...); // optional
+            continue;
+        }
+
+        // Build "Key: value" (or "Key:" when val_cstr == NULL)
+        size_t key_len = strlen(key);
+        size_t val_len = val_cstr ? strlen(val_cstr) : 0;
+        // "Key: " + val + '\0'  ->  key_len + 2 + 1 + val_len + 1 = key_len + val_len + 4
+        size_t line_len = key_len + (val_cstr ? (2 + 1 + val_len) : 1) + 1; // "Key:" + '\0'
+        char *line = (char *)malloc(line_len);
+        if (!line) { /* out of mem: clean up and bail */ curl_slist_free_all(headers); headers = NULL; break; }
+
+        if (val_cstr) {
+            // "Key: value"
+            // Note: HTTP requires exactly "Key: value" format
+            snprintf(line, line_len, "%s: %s", key, val_cstr);
+        } else {
+            // "Key:" -> instruct libcurl to remove header
+            snprintf(line, line_len, "%s:", key);
+        }
+
+        headers = curl_slist_append(headers, line);
+        free(line);
+        free(owned_val);
+        if (!headers) break;
+    }
+
+    yyjson_doc_free(doc);
+    return headers;
+}
+
+/**
+ * Open 2 memstreams for Response headers and body.
+ * On success, returns 0 and sets all outputs.
+ * On failure, returns an errno-style code with no leaks.
+ */
+int open_response(
+    FILE **headers_stream, char **headers_buf, size_t *headers_size,
+    FILE **body_stream,    char **body_buf,    size_t *body_size
+) {
+    // Ensure known state for callers
+    *headers_stream = NULL; *headers_buf = NULL; *headers_size = 0;
+    *body_stream    = NULL; *body_buf    = NULL; *body_size    = 0;
+
+    FILE *hs = open_memstream(headers_buf, headers_size);
+    if (!hs)
+        return ENOMEM;
+
+    FILE *bs = open_memstream(body_buf, body_size);
+    if (!bs) {
+        // Clean up headers stream. After fclose, headers_buf may become a malloc'd "" that must be freed.
+        fclose(hs);
+        if (*headers_buf) free(*headers_buf);
+        *headers_buf = NULL; *headers_size = 0;
+        return ENOMEM;
+    }
+
+    *headers_stream = hs;
+    *body_stream    = bs;
+    return 0;
+}
 
 typedef struct {
     int status;
@@ -240,14 +349,9 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
     return rc;
 }
 
-// Check if given Sqlite3 index constraint `cst` corresponds
-// to a `"resource" = 'somevalue'` clause in tvf call fetch('resourceURL')
-// or its full select query equivalent.
-static int
-is_cst_url_eq(struct sqlite3_index_constraint *cst) {
-    return (cst->iColumn == FETCH_URL && cst->op == SQLITE_INDEX_CONSTRAINT_EQ &&
-            cst->usable);
-}
+// xBestIndex inline index checkers
+#define IS_CST_URL_EQ(cst) (cst->iColumn == FETCH_URL && cst->op == SQLITE_INDEX_CONSTRAINT_EQ && cst->usable)
+#define IS_CST_HEADERS_EQ(cst) (cst->iColumn == FETCH_HEADERS && cst->op == SQLITE_INDEX_CONSTRAINT_EQ && cst->usable)
 
 // expected bitmask value of the index_info from xBestIndex for tvf
 #define REQUIRED_BITS 0b01
@@ -294,10 +398,15 @@ static int x_best_index(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
         struct sqlite3_index_constraint_usage *usage =
             &pIdxInfo->aConstraintUsage[i];
 
-        if (is_cst_url_eq(cst)) {
+        if (IS_CST_URL_EQ(cst)) {
             usage->omit = 1;
             usage->argvIndex = argPos++;
             planMask |= 0b01;
+        }
+        if (IS_CST_HEADERS_EQ(cst)) {
+            usage->omit = 1;
+            usage->argvIndex = argPos++;
+            planMask |= 0b10;
         }
     }
 
@@ -393,7 +502,7 @@ typedef enum {
     FETCH_METHOD_PUT
 } fetch_method_e;
 
-static CURL *fetch_curl_init(const char *url, fetch_method_e method, FILE *response_headers, FILE *response_body) {
+static CURL *fetch_curl_init(const char *url, fetch_method_e method, FILE *response_headers, FILE *response_body, struct curl_slist *request_headers, FILE *request_body) {
     CURL *curl = curl_easy_init();
     if (!curl)
         return NULL;
@@ -434,28 +543,16 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
         return SQLITE_ERROR;
 
     const char *req_url = (char *)sqlite3_value_text(argv[0]);
-    strmap_t *headers =
-        argc > 1 ? sqlite3_value_pointer(argv[1], "Headers") : NULL;
+    struct curl_slist *req_headers =
+        argc > 1 ? curl_slist_from_headers_json((char *) sqlite3_value_text(argv[1])) : NULL;
 
-    // mem2 -- fetch() response memory buffers
-    char *__resp_headers = malloc(1);
-    size_t resp_headers_size = 0;
-    FILE *resp_headers = open_memstream(&__resp_headers, &resp_headers_size);
+    FILE *resp_headers, *resp_body;
+    char *resp_headers_buf = NULL, *resp_body_buf = NULL;
+    size_t resp_headers_size = 0, resp_body_size = 0;
+    if (open_response(&resp_headers, &resp_headers_buf, &resp_headers_size, &resp_body, &resp_body_buf, &resp_body_size))
+        return SQLITE_NOMEM;
 
-    if (!resp_headers)
-        return ENOMEM;
-
-    char *__resp_body = malloc(1);
-    size_t resp_body_size = 0;
-    FILE *resp_body = open_memstream(&__resp_body, &resp_body_size);
-    // end mem2
-
-    if (!resp_body) {
-        fclose(resp_headers);
-        return ENOMEM;
-    }
-
-    CURL *curl = fetch_curl_init(req_url, FETCH_METHOD_GET, resp_headers, resp_body);
+    CURL *curl = fetch_curl_init(req_url, FETCH_METHOD_GET, resp_headers, resp_body, req_headers, NULL);
     curl_easy_perform(curl);
 
     // Write out bytes to __resp_headers and __resp_body
@@ -471,15 +568,15 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
     strncpy(tbl->url, resp_url, resp_url_sz);
     tbl->url[resp_url_sz] = '\0';
 
-    size_t hdrs_sz = strlen(__resp_headers);
-    strncpy(tbl->headers, __resp_headers, hdrs_sz);
+    size_t hdrs_sz = strlen(resp_headers_buf);
+    strncpy(tbl->headers, resp_headers_buf, hdrs_sz);
     tbl->headers[hdrs_sz] = '\0';
 
     tbl->redirected = resp_url_sz == strlen(req_url)
                           ? strncmp(resp_url, req_url, resp_url_sz)
                           : 0;
 
-    tbl->body = __resp_body;
+    tbl->body = resp_body_buf;
     tbl->body[resp_body_size] = '\0';
 
     curl_easy_cleanup(curl);
@@ -507,7 +604,13 @@ static int x_update(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv,
             return SQLITE_MISUSE;
         }
         const unsigned char *url = sqlite3_value_text(argv[FETCH_URL + X_UPDATE_OFFSET]);
-        printf("%s\n", url);
+        FILE *resp_headers, *resp_body;
+        char *resp_headers_buf = NULL, *resp_body_buf = NULL;
+        size_t resp_headers_size = 0, resp_body_size = 0;
+        if (open_response(&resp_headers, &resp_headers_buf, &resp_headers_size, &resp_body, &resp_body_buf, &resp_body_size))
+            return SQLITE_NOMEM;
+
+        CURL *curl = fetch_curl_init((const char *) url, FETCH_METHOD_POST, resp_headers, resp_body, NULL, NULL);
 
         // request_t post = {.url = sqlite3_value_text(argv[FETCH_COLUMN_URL]),
         //                   .method = "POST"};

@@ -33,7 +33,8 @@ and the data to write using the `body` column:
 
 <<< ../examples/sql/update.sql
 
-Set the `type` column to 'patch' if you want to make it a `PATCH` request:
+Set the `type` column to 'patch' if you want to make it a `PATCH` request. Casing doesn't matter,
+just as long as it spells out `patch`:
 
 
 <<< ../examples/sql/update_patch.sql
@@ -43,11 +44,6 @@ Set the `type` column to 'patch' if you want to make it a `PATCH` request:
 
 <<< ../examples/sql/delete.sql
 
-## See Also
-Here are some projects I found that were either direct inspirations
-or just happened to have overlapping solutions...
-
-1. [`sqlite-http`](https://github.com/asg017/sqlite-http): 
-Very similiar functionally, but API / design wise, `sqlite-http` represents
-HTTP Responses as scalar, while `sqlite-fetch` represents an HTTP Response
-as a row.
+## Next Steps
+See the [installation](./getting-started.md) page to download the extension. Or go straight to [the examples]()
+section to see how SQLite Fetch can be used.
