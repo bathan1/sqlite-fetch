@@ -12,6 +12,8 @@ SQLITE_EXTENSION_INIT1
 #include <string.h>
 #include <wchar.h>
 
+#define FETCH_DEBUG
+
 #include "strmap.h"
 
 // ---- Windows portability
@@ -192,8 +194,13 @@ static int is_same_origin(const char *a, const char *b) {
  * The SQLite virtual table
  */
 typedef struct {
-    //
     sqlite3_vtab base;
+
+    struct {
+        char *buffer;
+        size_t size;
+    } *columns;
+    size_t columns_size;
 
     uint16_t status;
     char *body;
@@ -269,6 +276,7 @@ typedef struct {
     "headers TEXT HIDDEN" /* 8 */                                             \
     ");"
 
+
 // #endregion fetch_schema
 
 #define X_UPDATE_OFFSET 2
@@ -282,6 +290,9 @@ typedef struct {
 #define FETCH_TYPE 6
 #define FETCH_URL 7
 #define FETCH_HEADERS 8
+
+typedef struct _sqlite3_column_info_s {
+} _sqlite3_column_info_t;
 
 static char *build_schema_from_args(sqlite3 *db, int argc,
                                     const char *const *argv) {
@@ -323,15 +334,29 @@ static char *build_schema_from_args(sqlite3 *db, int argc,
  * Along with user `CREATE VIRTUAL TABLE` statements...
  * @example
  * ```sql
- * CREATE VIRTUAL TABLE "https://sqlite-fetch.dev" using fetch (text as html);
- * SELECT html from "https://sqlite-fetch.dev";
+ * CREATE VIRTUAL TABLE todos using fetch (
+ *     id int,
+ *     "userId" int,
+ *     title text,
+ *     description text
+ * );
  * ```
  */
 static int x_connect(sqlite3 *pdb, void *paux, int argc,
                      const char *const *argv, sqlite3_vtab **pp_vtab,
                      char **pz_err) {
+    #ifdef FETCH_DEBUG
+        printf("dbg> xCreate/xConnect begin, argc=%d\n", argc);
+    #endif
     int rc = SQLITE_OK;
-    rc += sqlite3_declare_vtab(pdb, FETCH_TABLE_SCHEMA);
+    const char *schema = FETCH_TABLE_SCHEMA;
+    bool is_rowified = argc > 3;
+    // if argc <= 3, then this is either a CREATE VIRTUAL TABLE statement with 0 args
+    // or is a query against the main schema table `fetch`
+    if (is_rowified)
+        schema = build_schema_from_args(pdb, argc, argv);
+
+    rc += sqlite3_declare_vtab(pdb, schema);
 
     if (rc == SQLITE_OK) {
         *pp_vtab = sqlite3_malloc(sizeof(Fetch));
@@ -346,6 +371,11 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
         tbl->headers = malloc(1024 * 4);
         tbl->body = malloc(1024 * 8);
     }
+    #ifdef FETCH_DEBUG
+        printf("dbg> xCreate/xConnect end, rc=%d,schema=%s\n", rc, schema);
+    #endif
+    if (is_rowified)
+        sqlite3_free((void *) schema);
     return rc;
 }
 
@@ -386,7 +416,9 @@ static int check_plan_mask(struct sqlite3_index_info *index_info,
 }
 
 static int x_best_index(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
-    printf("xBestIndex()\n");
+    #ifdef FETCH_DEBUG
+        printf("dbg> xBestIndex start\n");
+    #endif
     int argPos = 1;
     int planMask = 0;
 
@@ -413,7 +445,11 @@ static int x_best_index(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
 
     pIdxInfo->idxNum = planMask;
 
-    return check_plan_mask(pIdxInfo, pVTab);
+    int rc = check_plan_mask(pIdxInfo, pVTab);
+    #ifdef FETCH_DEBUG
+        printf("dbg> xBestIndex end with rc %d\n", rc);
+    #endif
+    return rc;
 }
 
 static int x_disconnect(sqlite3_vtab *pvtab) {
@@ -422,7 +458,9 @@ static int x_disconnect(sqlite3_vtab *pvtab) {
 }
 
 static int x_open(sqlite3_vtab *pvtab, sqlite3_vtab_cursor **pp_cursor) {
-    printf("xOpen\n");
+    #ifdef FETCH_DEBUG
+        printf("dbg> xOpen begin\n");
+    #endif
     fetch_cursor_t *cur = sqlite3_malloc(sizeof(fetch_cursor_t));
     if (!cur)
         return SQLITE_NOMEM;
@@ -432,27 +470,43 @@ static int x_open(sqlite3_vtab *pvtab, sqlite3_vtab_cursor **pp_cursor) {
 
     *pp_cursor = (sqlite3_vtab_cursor *)cur;
     (*pp_cursor)->pVtab = pvtab;
+    #ifdef FETCH_DEBUG
+        printf("dbg> xOpen end\n");
+    #endif
     return SQLITE_OK;
 }
 
 static int x_close(sqlite3_vtab_cursor *cur) {
+    #ifdef FETCH_DEBUG
+        printf("dbg> xClose start\n");
+    #endif
     fetch_cursor_t *cursor = (fetch_cursor_t *)cur;
     if (cursor)
         sqlite3_free(cursor);
+    #ifdef FETCH_DEBUG
+        printf("dbg> xClose end\n");
+    #endif
     return SQLITE_OK;
 }
 
 /// API: `sqlite3_vtab.xNext()`
 static int x_next(sqlite3_vtab_cursor *pcursor) {
-    printf("x_next()\n");
+    #ifdef FETCH_DEBUG
+        printf("dbg> xNext start\n");
+    #endif
     ((fetch_cursor_t *)pcursor)->count++;
+    #ifdef FETCH_DEBUG
+        printf("dbg> xNext end\n");
+    #endif
     return SQLITE_OK;
 }
 
 /** Populates the Fetch row */
 static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
                     int icol) {
-    printf("x_column()!\n");
+    #ifdef FETCH_DEBUG
+        printf("dbg> xColumn start\n");
+    #endif
     fetch_cursor_t *cursor = (fetch_cursor_t *)pcursor;
     Fetch *tbl = (Fetch *)pcursor->pVtab;
 
@@ -484,17 +538,33 @@ static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
         sqlite3_result_int(pctx, tbl->redirected);
     }
 
+    #ifdef FETCH_DEBUG
+        printf("dbg> xColumn end\n");
+    #endif
     return SQLITE_OK;
 }
 
 /// API: `sqlite3_vtab.xEof()`
 static int x_eof(sqlite3_vtab_cursor *pcursor) {
-    return ((fetch_cursor_t *)pcursor)->count >= 1;
+    #ifdef FETCH_DEBUG
+        printf("dbg> xEof start\n");
+    #endif
+    bool is_eof = ((fetch_cursor_t *)pcursor)->count >= 1;
+    #ifdef FETCH_DEBUG
+        printf("dbg> xEof end, is_eof = %d\n", is_eof);
+    #endif
+    return is_eof;
 }
 
 /// API: `sqlite3_vtab.xRowid()`
 static int x_rowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
+    #ifdef FETCH_DEBUG
+        printf("dbg> xRowid start\n");
+    #endif
     *prowid = ((fetch_cursor_t *)pcursor)->count;
+    #ifdef FETCH_DEBUG
+        printf("dbg> xRowid end\n");
+    #endif
     return SQLITE_OK;
 }
 
@@ -640,11 +710,11 @@ static int x_update(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv,
 }
 
 static sqlite3_module sqlite_fetch = {0,            // iVersion
-                                      NULL,         // xCreate
+                                      x_connect,         // xCreate
                                       x_connect,    // xConnect
                                       x_best_index, // xBestIndex
                                       x_disconnect, // xDisconnect
-                                      NULL,         // xDestroy
+                                      x_disconnect, // xDestroy
                                       x_open,       // xOpen
                                       x_close,      // xClose
                                       x_filter,     // xFilter
