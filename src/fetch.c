@@ -3,7 +3,24 @@
 #include <sqlite3ext.h>
 SQLITE_EXTENSION_INIT1
 
+/* For debug logs */
 #define FETCH_DEBUG
+#ifdef FETCH_DEBUG
+  #define FETCH_DBG(...)                     \
+    do {                                     \
+      printf("fetch-dbg> " __VA_ARGS__);           \
+    } while (0)
+#else
+  #define FETCH_DBG(...) do { } while (0)
+#endif
+
+#define FREE(ptr)             \
+    do {                      \
+        if (ptr) {            \
+            free(ptr);        \
+            (ptr) = NULL;     \
+        }                     \
+    } while (0)
 
 #include <yyjson.h>
 #include <curl/curl.h>
@@ -198,18 +215,20 @@ typedef struct {
     sqlite3_vtab base;
     bool is_dynamic;
     char *schema;
+    struct {
+        char *url;
+        char *headers;
+        char *body;
+    } request;
 
     struct {
-        char *buffer;
-        size_t size;
-    } *columns;
-    size_t columns_size;
+        uint16_t status;
+        char *body;
+        char *url;
+        char *headers;
+        bool redirected;
+    } response;
 
-    uint16_t status;
-    char *body;
-    char *url;
-    char *headers;
-    bool redirected;
 } Fetch;
 
 /// Cursor
@@ -261,7 +280,7 @@ static char *trim(sqlite3 *db, const char *b, const char *e) {
 }
 
 /* For xCreate options arguments */
-#define IS_KEY_URL(key) (strncmp("url", key, 3))
+#define IS_KEY_URL(key) (!strncmp("url", key, 3))
 
 /** @sqlite3_malloc() a @Fetch buffer for DB */
 static Fetch *Fetch_alloc(sqlite3 *db, int argc,
@@ -270,6 +289,10 @@ static Fetch *Fetch_alloc(sqlite3 *db, int argc,
     if (!vtab)
         return NULL;
     memset(vtab, 0, sizeof(Fetch));
+    // Allocate response buffers upfront
+    vtab->response.url = malloc(1 << 16);
+    vtab->response.body = malloc(1 << 16);
+    vtab->response.headers = malloc(1 << 16);
     
     int schema_i = 3;
     while (schema_i < argc) {
@@ -286,6 +309,7 @@ static Fetch *Fetch_alloc(sqlite3 *db, int argc,
 
         char *key   = trim(db, kbeg, kend);
         char *value = trim(db, vbeg, vend);
+
         if (!key || !value) {
             free(key);
             free(value);
@@ -297,7 +321,7 @@ static Fetch *Fetch_alloc(sqlite3 *db, int argc,
             unsigned long url_size = strlen(value);
             memmove(value, value + 1, url_size - 2);
             value[url_size - 2] = 0;
-            vtab->url = value;
+            vtab->request.url = value;
         }
     }
 
@@ -306,7 +330,13 @@ static Fetch *Fetch_alloc(sqlite3 *db, int argc,
 
     sqlite3_str *s = sqlite3_str_new(db);
     if (!s) {
-        if (vtab->url) free(vtab->url);
+        FREE(vtab->request.url);
+        FREE(vtab->request.body);
+        FREE(vtab->request.headers);
+        FREE(vtab->response.url);
+        FREE(vtab->response.body);
+        FREE(vtab->response.headers);
+
         sqlite3_free(vtab);
         return NULL;
     }
@@ -323,9 +353,9 @@ static Fetch *Fetch_alloc(sqlite3 *db, int argc,
         sqlite3_str_appendall(s, ")");
     } else {
         sqlite3_str_appendall(s, FETCH_TABLE_SCHEMA);
-        vtab->url = malloc(1 << 16);
-        vtab->body = malloc(1 << 16);
-        vtab->headers = malloc(1 << 16);
+        vtab->request.url = calloc(1 << 16, sizeof(char));
+        vtab->request.body = calloc(1 << 16, sizeof(char));
+        vtab->request.headers = calloc(1 << 16, sizeof(char));
     }
 
     vtab->schema = sqlite3_str_finish(s);
@@ -366,11 +396,7 @@ static Fetch *Fetch_alloc(sqlite3 *db, int argc,
 static int x_connect(sqlite3 *pdb, void *paux, int argc,
                      const char *const *argv, sqlite3_vtab **pp_vtab,
                      char **pz_err) {
-    {
-        #ifdef FETCH_DEBUG
-            printf("dbg> BEGIN xCreate/xConnect, argc=%d\n", argc);
-        #endif
-    }
+    FETCH_DBG("dbg> BEGIN xCreate/xConnect, argc=%d\n", argc);
 
     int rc = SQLITE_OK;
     *pp_vtab = (sqlite3_vtab *) Fetch_alloc(pdb, argc, argv);
@@ -379,18 +405,14 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
 
     rc += sqlite3_declare_vtab(pdb, vtab->schema);
     if (rc != SQLITE_OK) {
-        free(vtab->body);
-        free(vtab->headers);
-        free(vtab->url);
+        free(vtab->request.body);
+        free(vtab->request.headers);
+        free(vtab->request.url);
 
         sqlite3_free(vtab);
     }
 
-    {
-        #ifdef FETCH_DEBUG
-            printf("dbg> END xCreate/xConnect, rc=%d, schema=%s\n, vtab=%p\n\n", rc, vtab->schema, vtab);
-        #endif
-    }
+    FETCH_DBG("dbg> END xCreate/xConnect, table \"%s\" set to url = %s\n\n", argv[2], vtab->request.url ? vtab->request.url : "NO_URL");
 
     return rc;
 }
@@ -432,14 +454,19 @@ static int check_plan_mask(struct sqlite3_index_info *index_info,
     return SQLITE_OK;
 }
 
+/**
+ * Fetch vtab's @sqlite_module->xBestIndex() callback
+ */
 static int x_best_index(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
-    {
-        #ifdef FETCH_DEBUG
-            printf("dbg> BEGIN xBestIndex\n");
-        #endif
-    }
+    FETCH_DBG("BEGIN xBestIndex\n");
     int argPos = 1;
     int planMask = 0;
+    Fetch *vtab = (Fetch *)pVTab;
+    if (vtab->is_dynamic) {
+        FETCH_DBG("END xBestIndex, quick case (dynamic vtable): %s\n\n", vtab->request.url);
+        pIdxInfo->idxNum = planMask |= 0b01;
+        return 0;
+    }
 
     for (int i = 0; i < pIdxInfo->nConstraint; i++) {
         struct sqlite3_index_constraint *cst = &pIdxInfo->aConstraint[i];
@@ -483,11 +510,6 @@ static int x_disconnect(sqlite3_vtab *pvtab) {
     }
 
     Fetch *vtab = (Fetch *) pvtab;
-
-    free(vtab->body);
-    free(vtab->headers);
-    free(vtab->url);
-
     sqlite3_free(pvtab);
     {
         #ifdef FETCH_DEBUG
@@ -546,7 +568,7 @@ static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
                     int icol) {
     {
         #ifdef FETCH_DEBUG
-            printf("dbg> BEGIN xColumn\n");
+            printf("dbg> BEGIN xColumn, icol=%d\n", icol);
         #endif
     }
 
@@ -555,30 +577,30 @@ static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
 
     switch (icol) {
     case FETCH_URL:
-        sqlite3_result_text(pctx, (const char *)tbl->url, -1, SQLITE_TRANSIENT);
+        sqlite3_result_text(pctx, (const char *)tbl->response.url, -1, SQLITE_TRANSIENT);
         break;
     case FETCH_HEADERS:
-        sqlite3_result_text(pctx, (const char *)tbl->headers, -1,
+        sqlite3_result_text(pctx, (const char *)tbl->response.headers, -1,
                             SQLITE_TRANSIENT);
         break;
     case FETCH_STATUS:
-        sqlite3_result_int(pctx, tbl->status);
+        sqlite3_result_int(pctx, tbl->response.status);
         break;
     case FETCH_STATUS_TEXT:
-        sqlite3_result_text(pctx, fetch_status_text(tbl->status), -1,
+        sqlite3_result_text(pctx, fetch_status_text(tbl->response.status), -1,
                             SQLITE_TRANSIENT);
         break;
     case FETCH_OK:
-        sqlite3_result_int(pctx, tbl->status >= 200 && tbl->status < 300);
+        sqlite3_result_int(pctx, tbl->response.status >= 200 && tbl->response.status < 300);
         break;
     case FETCH_BODY:
-        sqlite3_result_text(pctx, tbl->body, -1, SQLITE_TRANSIENT);
+        sqlite3_result_text(pctx, tbl->response.body, -1, SQLITE_TRANSIENT);
         break;
     case FETCH_BODY_USED:
         sqlite3_result_int(pctx, 1);
         break;
     case FETCH_REDIRECTED:
-        sqlite3_result_int(pctx, tbl->redirected);
+        sqlite3_result_int(pctx, tbl->response.redirected);
     }
 
     #ifdef FETCH_DEBUG
@@ -651,27 +673,20 @@ static CURL *fetch_curl_init(const char *url, fetch_method_e method, FILE *req_h
 
 static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
                     int argc, sqlite3_value **argv) {
-    {
-        #ifdef FETCH_DEBUG
-            printf("dbg> BEGIN xFilter\n");
-        #endif
+    FETCH_DBG("BEGIN xFilter, argc=%d\n", argc);
+
+    if (!cur || !cur->pVtab || ((index & REQUIRED_BITS) != REQUIRED_BITS)) {
+        return SQLITE_ERROR;
     }
 
-    if (argc != 1 || !cur || !cur->pVtab || ((index & REQUIRED_BITS) != REQUIRED_BITS))
-        return SQLITE_ERROR;
-
-    Fetch *tbl = (Fetch *)cur->pVtab;
+    Fetch *vtab = (Fetch *)cur->pVtab;
     fetch_cursor_t *cursor = (fetch_cursor_t *)cur;
     if (!cursor)
         return SQLITE_ERROR;
 
-    const char *req_url = (char *) sqlite3_value_text(argv[0]);
+    const char *request_url = vtab->is_dynamic ? vtab->request.url : (char *) sqlite3_value_text(argv[0]);
 
-    {
-        #ifdef FETCH_DEBUG
-            printf("dbg> With req_url = %s\n", req_url);
-        #endif
-    }
+    FETCH_DBG("With req_url = %s\n", request_url);
 
     struct curl_slist *req_headers =
         argc > 1 ? curl_slist_from_headers_json((char *) sqlite3_value_text(argv[1])) : NULL;
@@ -683,7 +698,7 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
     if (open_response(&resp_headers, &resp_headers_buf, &resp_headers_size, &resp_body, &resp_body_buf, &resp_body_size))
         return SQLITE_NOMEM;
 
-    CURL *curl = fetch_curl_init(req_url, FETCH_METHOD_GET, resp_headers, resp_body, req_headers, NULL);
+    CURL *curl = fetch_curl_init(request_url, FETCH_METHOD_GET, resp_headers, resp_body, req_headers, NULL);
 
     curl_easy_perform(curl);
 
@@ -692,33 +707,29 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
     fclose(resp_body);
     curl_slist_free_all(req_headers);
 
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &tbl->status);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &vtab->response.status);
     char *response_url = NULL;
     curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &response_url);
     size_t response_url_len = strlen(response_url);
     if ((response_url_len + 1) > 8096)
         return SQLITE_NOMEM;
-    strncpy(tbl->url, response_url, response_url_len);
-    tbl->url[response_url_len] = '\0';
+    strncpy(vtab->response.url, response_url, response_url_len);
+    vtab->response.url[response_url_len] = '\0';
 
     size_t hdrs_sz = strlen(resp_headers_buf);
-    strncpy(tbl->headers, resp_headers_buf, hdrs_sz);
-    tbl->headers[hdrs_sz] = '\0';
+    strncpy(vtab->response.headers, resp_headers_buf, hdrs_sz);
+    vtab->response.headers[hdrs_sz] = '\0';
 
-    tbl->redirected = response_url_len == strlen(req_url)
-                          ? strncmp(response_url, req_url, response_url_len)
+    vtab->response.redirected = response_url_len == strlen(request_url)
+                          ? strncmp(response_url, request_url, response_url_len)
                           : 0;
 
-    tbl->body = resp_body_buf;
-    tbl->body[resp_body_size] = '\0';
+    vtab->response.body = resp_body_buf;
+    vtab->response.body[resp_body_size] = '\0';
 
     curl_easy_cleanup(curl);
 
-    {
-        #ifdef FETCH_DEBUG
-            printf("dbg> END xFilter\n\n");
-        #endif
-    }
+    FETCH_DBG("END xFilter\n\n");
     return SQLITE_OK;
 };
 
@@ -770,7 +781,7 @@ static int x_update(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv,
     }
 
     if (X_UPDATE_IS_DELETE(argc, argv)) {
-        char *url = ((Fetch *) pVTab)->url;
+        char *url = ((Fetch *) pVTab)->request.url;
     }
 
     return SQLITE_OK;
