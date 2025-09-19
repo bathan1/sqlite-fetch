@@ -10,8 +10,8 @@ if(POLICY CMP0077)
 endif()
 
 # ---------------- Build toggles ----------------
-option(BUILD_FETCH        "Build the network fetch extension"                ON)
-option(BUILD_EXT          "Build other included SQLite extension(s)"         OFF)
+option(BUILD_FETCH        "Build the Fetch extension"                ON)
+option(BUILD_EXT          "Build other included SQLite extensions"         OFF)
 option(THIRDPARTY_STATIC  "Build libuv/libcurl static and link into fetch"   OFF)
 
 include(FetchContent)
@@ -44,6 +44,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(sqlite)
 set(SQLITE_TREE "${sqlite_SOURCE_DIR}")
+
+FetchContent_Declare(
+    uthash
+    GIT_REPOSITORY https://github.com/troydhanson/uthash
+    GET_TAG master
+)
+
+FetchContent_MakeAvailable(uthash)
+
+# Tell CMake to create an INTERFACE library from the header
+add_library(uthash INTERFACE)
+target_include_directories(uthash INTERFACE
+  $<BUILD_INTERFACE:${uthash_SOURCE_DIR}/src>
+  $<INSTALL_INTERFACE:include>
+)
 
 ## yyjson for json parsing
 FetchContent_Declare(
@@ -111,64 +126,6 @@ endfunction()
 #                           FETCH EXTENSION
 # ======================================================================
 if(BUILD_FETCH)
-
-  # ----------------------------------------------
-  # libuv: system first (dynamic), else FetchContent
-  # ----------------------------------------------
-  unset(UV_TARGET)
-  unset(UV_FROM_SYSTEM)
-  if(NOT THIRDPARTY_STATIC)
-    # Try system libuv
-    find_path(LIBUV_INCLUDE_DIR NAMES uv.h)
-    find_library(LIBUV_LIBRARY   NAMES uv libuv)
-    if(LIBUV_INCLUDE_DIR AND LIBUV_LIBRARY)
-      add_library(uv_system SHARED IMPORTED)
-      set_target_properties(uv_system PROPERTIES
-        IMPORTED_LOCATION "${LIBUV_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES "${LIBUV_INCLUDE_DIR}"
-      )
-      set(UV_TARGET uv_system)
-      set(UV_FROM_SYSTEM TRUE)
-    endif()
-  endif()
-
-  # Fallback to FetchContent (dynamic or static) if no system uv or if THIRDPARTY_STATIC=ON
-  if(NOT DEFINED UV_TARGET)
-    if(THIRDPARTY_STATIC)
-      set(UV_ARGS
-        -DLIBUV_BUILD_SHARED=OFF
-        -DLIBUV_BUILD_STATIC=ON
-        -DBUILD_TESTING=OFF
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-      )
-    else()
-      set(UV_ARGS
-        -DLIBUV_BUILD_SHARED=ON
-        -DLIBUV_BUILD_STATIC=OFF
-        -DBUILD_TESTING=OFF
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-      )
-    endif()
-
-    FetchContent_Declare(
-      libuv
-      GIT_REPOSITORY https://github.com/libuv/libuv.git
-      GIT_TAG v1.49.2
-      GIT_SHALLOW TRUE
-      CMAKE_ARGS ${UV_ARGS}
-    )
-    FetchContent_MakeAvailable(libuv)
-
-    if(THIRDPARTY_STATIC)
-      set(UV_TARGET uv_a)
-    else()
-      set(UV_TARGET uv)
-    endif()
-  endif()
-
-  # ----------------------------------------------
-  # libcurl: system first (dynamic), else FetchContent
-  # ----------------------------------------------
   unset(CURL_LINK_TARGET)
   unset(CURL_FROM_SYSTEM)
   if(NOT THIRDPARTY_STATIC)
@@ -246,22 +203,14 @@ if(BUILD_FETCH)
     )
   endif()
 
-  # Only add libuv build-tree includes when we are NOT using system uv
-  if(NOT UV_FROM_SYSTEM AND TARGET uv)
-    target_include_directories(fetch PRIVATE
-      ${libuv_SOURCE_DIR}/include
-      ${libuv_BINARY_DIR}/include
-    )
-  endif()
-
   if(UNIX AND NOT APPLE)
     set(EXTRA_SYS_LIBS pthread dl rt)
   endif()
 
   target_link_libraries(fetch PRIVATE
+    uthash
     yyjson
     ${CURL_LINK_TARGET}    # system or FC (static/dynamic)
-    ${UV_TARGET}           # system uv, uv (shared) or uv_a (static)
     OpenSSL::SSL OpenSSL::Crypto
     ZLIB::ZLIB
     ${EXTRA_SYS_LIBS}
