@@ -31,8 +31,8 @@ export default defineConfig({
             link: "/guide/introduction",
           },
           {
-            text: "Getting Started",
-            link: "/guide/getting-started",
+            text: "API Design",
+            link: "/guide/api-design",
           }
         ],
       },

@@ -1,5 +1,5 @@
 # sqlite-fetch
-Web APIs in SQLite.
+HTTP over SQLite.
 
 | OS      | Arch  | Tested |
 |---------|-------|--------|
@@ -11,7 +11,7 @@ Web APIs in SQLite.
 | Windows | arm64 | ❌      |
 
 ## TLDR
-SQLite c api call headers are from the SQLite [3.38.0](https://www.sqlite.org/releaselog/3_38_0.html) release.
+SQLite C API headers are from the SQLite [3.38.0](https://www.sqlite.org/releaselog/3_38_0.html) release.
 
 CMake Flags:
 | Flag                | Description                                                                  | Default   |
@@ -42,22 +42,14 @@ pnpm run build
 ## Main Build
 Building from source on your local machine is easy.
 
-You just need [libcurl](https://curl.se/libcurl/) for handling tcp and [libuv](https://libuv.org/) to 
-handle arbitrary stream buffers on 1 process.
+You just need to install [libcurl](https://curl.se/libcurl/).
 
-Once you have those built, [compile the extension](https://www.sqlite.org/loadext.html). 
+Once you have that, [compile the extension](https://www.sqlite.org/loadext.html). 
 Using [`gcc`](https://gcc.gnu.org/) for example:
 
 ```bash
 # omit include flags for brevity
-gcc src/fetch.c src/stream.c -g -fPIC -shared -lcurl -luv
-```
-
-```bash
-nvm use 22.4.1
-CC=gcc CXX=g++ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target fetch -j"$(nproc)"
-
+gcc src/fetch.c -g -fPIC -shared -lcurl
 ```
 
 And that's it!
@@ -69,7 +61,7 @@ The 4 commands to build the extension are:
 mkdir build && cd build && cmake .. && make fetch
 ```
 
-The default build flags link `libuv` and `libcurl` dynamically.
+The default build flags link `libcurl` dynamically.
 
 Set the `THIRDPARTY_STATIC` build variable to `ON` to tell CMake 
 to link the dependencies *statically*.
@@ -92,41 +84,6 @@ sqlite3
 ```sql
 .load ./build/libfetch.linux-x64
 select json, ok from fetch('https://jsonplaceholder.typicode.com/todos')
-```
-
-`fetch.c` uses the `__EMSCRIPTEN__` macro [emcc](https://emscripten.org/docs/tools_reference/emcc.html) plasters at compile-time to link the function implementations at compile-time:
-
-```c
-#ifdef __EMSCRIPTEN__ // WASM CASE with emcc
-#include <emscripten.h>
-
-// Some SQLite API functions take a pointer to a function that frees
-// memory. Although we could add a C binding to a JavaScript function
-// that calls sqlite3_free(), it is more efficient to pass the sqlite3_free
-// function pointer directly. This function provides the C pointer to
-// JavaScript.
-void *EMSCRIPTEN_KEEPALIVE getSqliteFree() { return sqlite3_free; }
-
-EM_ASYNC_JS(static response_t *, fetch,
-            (const unsigned char *resource, const unsigned char *options), {
-    const rmap = (globalThis.__rmap__ = globalThis.__rmap__ ?? {
-        map: new Map(),
-        count: 0
-    });
-...
-```
-
-So all the native code is in the `#else` branch of that check:
-
-```c
-#else // NATIVE CASE (with clang or gcc)
-#include <curl/curl.h>
-#include <uv.h>
-
-/// This is roughly the equivalent of `await body.getReader().read()`
-static size_t write_callback(void *contents, size_t size, size_t nmemb,
-                             void *userp) {
-    size_t total = size * nmemb;
 ```
 
 ## Tests
