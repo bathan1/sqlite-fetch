@@ -536,7 +536,7 @@ static int x_next(sqlite3_vtab_cursor *pcursor) {
     #endif
     ((fetch_cursor_t *)pcursor)->count++;
     #ifdef FETCH_DEBUG
-        printf("dbg> END xNext\n");
+        printf("dbg> END xNext\n\n");
     #endif
     return SQLITE_OK;
 }
@@ -602,11 +602,11 @@ static int x_eof(sqlite3_vtab_cursor *pcursor) {
 /// API: `sqlite3_vtab.xRowid()`
 static int x_rowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
     #ifdef FETCH_DEBUG
-        printf("dbg> xRowid start\n");
+        printf("dbg> BEGIN xRowid\n");
     #endif
     *prowid = ((fetch_cursor_t *)pcursor)->count;
     #ifdef FETCH_DEBUG
-        printf("dbg> xRowid end\n");
+        printf("dbg> END xRowid end\n\n");
     #endif
     return SQLITE_OK;
 }
@@ -722,6 +722,7 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
     return SQLITE_OK;
 };
 
+/* more inline checks */
 #define X_UPDATE_IS_DELETE(argc, argv)                                         \
     (argc == 1 && sqlite3_value_type(argv[0]) != SQLITE_NULL)
 #define X_UPDATE_IS_INSERT(argc, argv)                                         \
