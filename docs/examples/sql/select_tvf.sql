@@ -1,1 +1,0 @@
-select * from fetch('https://sqlite-fetch.dev');

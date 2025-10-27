@@ -1,7 +1,0 @@
-create virtual table todos using fetch (
-    url = 'https://jsonplaceholder.typicode.com/todos',
-    id int primary key,
-    "userId" int,
-    title text,
-    completed int
-);
