@@ -76,6 +76,7 @@ curl -X PATCH https://jsonplaceholder.typicode.com/todos/101 \
         "title": "Hello SQLite Fetch"
     }'
 ```
+:::
 
 ## DELETE
 `DELETE` maps to a `DELETE` request line. Specifying the 'url' via the `url` column in the `WHERE`
