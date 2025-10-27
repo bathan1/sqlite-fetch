@@ -98,7 +98,6 @@ struct curl_slist *curl_slist_from_headers_json(char *json_obj_str) {
     yyjson_read_err err;
     yyjson_doc *doc = yyjson_read_opts(json_obj_str, strlen(json_obj_str), 0, NULL, &err);
     if (!doc) {
-        // parse error; you could log err.code/err.msg
         return NULL;
     }
 
@@ -116,10 +115,9 @@ struct curl_slist *curl_slist_from_headers_json(char *json_obj_str) {
         const char *key = yyjson_get_str(k);
         if (!key || !*key) continue;
 
-        // Convert value to string (NULL -> remove header)
         char numbuf[64];
         const char *val_cstr = NULL;
-        char *owned_val = NULL; // if we allocate
+        char *owned_val = NULL;
 
         if (yyjson_is_str(v)) {
             val_cstr = yyjson_get_str(v);
@@ -137,25 +135,18 @@ struct curl_slist *curl_slist_from_headers_json(char *json_obj_str) {
             snprintf(numbuf, sizeof(numbuf), "%g", yyjson_get_real(v));
             val_cstr = numbuf;
         } else {
-            // For arrays/objects, either skip or serialize:
-            // owned_val = yyjson_write_opts(doc_for_v,...); // optional
             continue;
         }
 
-        // Build "Key: value" (or "Key:" when val_cstr == NULL)
         size_t key_len = strlen(key);
         size_t val_len = val_cstr ? strlen(val_cstr) : 0;
-        // "Key: " + val + '\0'  ->  key_len + 2 + 1 + val_len + 1 = key_len + val_len + 4
         size_t line_len = key_len + (val_cstr ? (2 + 1 + val_len) : 1) + 1; // "Key:" + '\0'
         char *line = (char *)malloc(line_len);
-        if (!line) { /* out of mem: clean up and bail */ curl_slist_free_all(headers); headers = NULL; break; }
+        if (!line) { curl_slist_free_all(headers); headers = NULL; break; }
 
         if (val_cstr) {
-            // "Key: value"
-            // Note: HTTP requires exactly "Key: value" format
             snprintf(line, line_len, "%s: %s", key, val_cstr);
         } else {
-            // "Key:" -> instruct libcurl to remove header
             snprintf(line, line_len, "%s:", key);
         }
 
@@ -853,25 +844,25 @@ static int x_update(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv,
     return SQLITE_OK;
 }
 
-static sqlite3_module sqlite_fetch = {0,            // iVersion
-                                      x_connect,     // xCreate
-                                      x_connect,    // xConnect
-                                      x_best_index, // xBestIndex
-                                      x_disconnect, // xDisconnect
-                                      x_disconnect, // xDestroy
-                                      x_open,       // xOpen
-                                      x_close,      // xClose
-                                      x_filter,     // xFilter
-                                      x_next,       // xNext
-                                      x_eof,        // xEof
-                                      x_column,     // xColumn
-                                      x_rowid,      // xRowid
-                                      x_update,     // xUpdate
-                                      NULL,         // xBegin
-                                      NULL,         // xSync
-                                      NULL,         // xCommit
-                                      NULL,         // xRollback
-                                      NULL};
+static sqlite3_module sqlite_fetch = {.iVersion=0,            // iVersion
+                                      .xCreate=0,            // xCreate
+                                      .xConnect=x_connect,    // xConnect
+                                      .xBestIndex=x_best_index, // xBestIndex
+                                      .xDisconnect=x_disconnect, // xDisconnect
+                                      .xDestroy=0,            // xDestroy
+                                      .xOpen=x_open,       // xOpen
+                                      .xClose=x_close,      // xClose
+                                      .xFilter=x_filter,     // xFilter
+                                      .xNext=x_next,       // xNext
+                                      .xEof=x_eof,        // xEof
+                                      .xColumn=x_column,     // xColumn
+                                      .xRowid=x_rowid,      // xRowid
+                                      .xUpdate=x_update,     // xUpdate
+                                      .xBegin=NULL,         // xBegin
+                                      .xSync=NULL,         // xSync
+                                      .xCommit=NULL,         // xCommit
+                                      .xRollback=NULL,         // xRollback
+                                      .xFindFunction=NULL};
 
 // Runtime loadable entry
 int sqlite3_fetch_init(sqlite3 *db, char **pzErrMsg,

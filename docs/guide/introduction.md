@@ -1,14 +1,7 @@
 # Introduction
 SQLite Fetch is a [runtime loadable extension](https://www.sqlite.org/loadext.html) that allows
-you to make HTTP queries directly from your database.
-
-Just declare your [virtual table](https://www.sqlite.org/vtab.html)...
-
-<<< ../examples/sql/create.sql
-
-Then query it just like any other table:
-
-<<< ../examples/sql/create_crud.sql
+you to make [`Fetch API`](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) calls directly from 
+your SQLite.
 
 ## Installation
 You can get the extension through the standalone [releases]() page,
