@@ -18,10 +18,11 @@ Or **try SQLite Fetch immediately on Web Assembly** [here]().
 
 ## Link the Extension
 
-Install the extension from the Github releases page and open SQLite:
+Install the extension from the Github releases page and open SQLite. 
+The default release is Linux x86_64:
 
 ```bash
-curl -LO https://github.com/bathan1/sqlite-fetch/releases/download/latest/libfetch-linux64.so
+curl -LO https://github.com/bathan1/sqlite-fetch/releases/download/latest/libfetch.so
 sqlite3
 ```
 
@@ -65,6 +66,7 @@ If you only cared about the `id` and `title` keys,
 you can tell `fetch` to store only those keys as the columns:
 
 ```sql
+drop table if exists todos;
 create virtual table todos using fetch (
     'https://jsonplaceholder.typicode.com/todos',
     id int,
@@ -83,6 +85,7 @@ select * from patients;
 
 You can point the virtual table to a nested path by setting the `body` argument to a [jsonpath]():
 ```sql
+drop table if exists patients;
 create virtual table patients using fetch (
     'https://r4.smarthealthit.org/Patient',
     body='$.entry[*].resource'
@@ -90,5 +93,4 @@ create virtual table patients using fetch (
 select * from patients;
 ```
 
-While JSON is the default, you can parse the payload into [other formats]() 
-as well.
+While JSON is the default, you can parse the payload into [other formats]()  as well.
