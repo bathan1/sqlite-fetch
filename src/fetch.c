@@ -290,17 +290,14 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
         return NULL;
     }
     memset(vtab, 0, sizeof(Fetch));
-    sqlite3_str *s = sqlite3_str_new(db);
 
     int num_columns = argc - (num_fetch_args + FETCH_ARGS_OFFSET);
-
 
     yyjson_val *root = yyjson_doc_get_root(payload_doc);
     vtab->payload_len = yyjson_arr_size(root);
     vtab->payload = payload_doc;
     if (num_columns < 0) {
         fprintf(stderr, "computed more fetch arguments than possible %d\n", FETCH_ARGS_OFFSET);
-        sqlite3_free(s);
         sqlite3_free(vtab);
         return NULL;
     }
@@ -312,7 +309,6 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
                 stderr,
                 "dynamic schema needs at least 1 json element in the response body\n"
             );
-            sqlite3_free(s);
             sqlite3_free(vtab);
             return NULL;
         }
@@ -325,7 +321,6 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
                 "dynamic schema expected head type to be object but got %s\n",
                 yyjson_get_type_desc(head)
             );
-            sqlite3_free(s);
             sqlite3_free(vtab);
             return NULL;
         }
@@ -355,23 +350,25 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
                     break;
                 }
                 case YYJSON_TYPE_NUM: {
-                    if (yyjson_is_real(value)) {
-                        def->typename = strdup("float");
-                    } else if (yyjson_is_sint(value) || yyjson_is_uint(value)) {
+                    if (yyjson_is_sint(value) || yyjson_is_uint(value)) {
                         def->typename = strdup("int");
+                        def->typename_len = 3;
                     } else {
                         def->typename = strdup("float");
+                        def->typename_len = 5;
                     }
                     def->json_typename = strdup("number");
                     break;
                 }
                 case YYJSON_TYPE_BOOL: {
                     def->typename = strdup("text");
+                    def->typename_len = 4;
                     def->json_typename = strdup("boolean");
                     break;
                 }
                 default:
                     def->typename = strdup("text");
+                    def->typename_len = 4;
                     def->json_typename = strdup("string");
             }
 
@@ -382,7 +379,6 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
         int index = 0;
         for (int i = argc - num_fetch_args - 1; i < argc; i++) {
             const char *arg = argv[i];
-            // sqlite3_str_appendall(s, arg);
 
             int tokens_size = 0;
             int token_lens[2];
@@ -398,7 +394,8 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
             column_def *def = malloc(sizeof(column_def));
             def->name = tok_col;
             def->name_len = tok_col_len;
-            def->typename = to_lower(tok_col_type, tok_col_len);
+            def->typename = to_lower(tok_col_type, tok_col_type_len);
+            def->typename_len = tok_col_len;
 
             vtab->columns[index++] = def;
         }
@@ -407,6 +404,7 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
 
     /* max number of tokens valid inside a single xCreate argument for the table declaration */
     int MAX_ARG_TOKENS = 2;
+    sqlite3_str *s = sqlite3_str_new(db);
     sqlite3_str_appendall(s, "CREATE TABLE x(");
     for (int i = 0; i < num_columns; i++) {
         column_def *def = vtab->columns[i];
