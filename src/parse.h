@@ -1,13 +1,12 @@
 #ifndef FETCH_PARSE_H
 #define FETCH_PARSE_H
 
+#include <errno.h>
 #include <assert.h>
 #include <ctype.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "yyjson.h"
 
 static void trim_slice(const char **begin, const char **end) {
     // *begin .. *end is half-open, end points one past last char
@@ -15,9 +14,44 @@ static void trim_slice(const char **begin, const char **end) {
     while (*end > *begin && isspace((unsigned char)*((*end) - 1))) (*end)--;
 }
 
+/**
+ * Returns a *new* string with CH removed from STR (of length N).
+ * Sets N to the new size if it is passed in. Otherwise, it will
+ * compute `strlen` on STR to handle the removal.
+ */
+char *remove_all(const char *str, size_t *n, char ch) {
+    size_t len = (n != NULL) ? *n : 0;
+    if (len < 1) {
+        len = strlen(str);
+    }
+
+    char *new = (char *) malloc(len);
+    if (!new) {
+        errno = ENOMEM;
+        return NULL;
+    }
+    int new_index = 0;
+
+    for (int i = 0; i < len; i++) {
+        char curr_ch = str[i];
+        if (curr_ch != ch) {
+            new[new_index++] = curr_ch;
+        }
+    }
+    // new_index is length if there are no matches on CH.
+    if (new_index != len) {
+        new[new_index] = '\0';
+        new = realloc(new, new_index);
+        if (n) {
+            *n = new_index;
+        }
+    }
+    return new;
+}
+
 static char *trim(const char *b, const char *e) {
     const ptrdiff_t len = e - b;
-    char *out = (char *)malloc((int)len + 1);
+    char *out = (char *) malloc((int)len + 1);
     if (!out) return NULL;
     memcpy(out, b, (size_t)len);
     out[len] = '\0';
