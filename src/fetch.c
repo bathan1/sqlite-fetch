@@ -18,57 +18,14 @@ SQLITE_EXTENSION_INIT1
 /* utils */
 #include "parse.h"
 
-// ---- Windows portability
-#ifdef _WIN32
-#include <fcntl.h>
-#include <io.h>
-#define pipe(fds) _pipe((fds), 4096, _O_BINARY)
-// If you ever need close(), MSYS2 provides it; otherwise map to _close:
-#endif
-
 #ifndef MIN
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #endif
 
-/* For working directly with a Response struct */
-// #region fetch_schema
-#define FETCH_TABLE_SCHEMA \
-    "CREATE TABLE fetch (" \
-    "body BLOB,"           /* 0 */                                             \
-    "body_used INT,"       /* 1 */                                             \
-    "ok INT,"              /* 2 */                                             \
-    "redirected INT,"      /* 3 */                                             \
-    "status INT,"          /* 4 */                                             \
-    "status_text TEXT,"    /* 5 */                                             \
-    "type TEXT,"           /* 6 */                                             \
-    "url TEXT HIDDEN,"      /* 7 */                                             \
-    "headers TEXT HIDDEN" /* 8 */                                             \
-    ");"
-// #endregion fetch_schema
-#define FETCH_TABLE_COLUMN_COUNT 9
-#define FETCH_BODY_USED 1
-#define FETCH_OK 2
-#define FETCH_REDIRECTED 3
-#define FETCH_STATUS 4
-#define FETCH_STATUS_TEXT 5
-#define FETCH_TYPE 6
 
 #define FETCH_URL 0
 #define FETCH_BODY 1
 #define FETCH_HEADERS 2
-
-#define TRY_CALLOC(ptr, nbytes)                                \
-    do {                                                       \
-        (ptr) = (char*)calloc(1, (nbytes));                    \
-    } while (0)
-#define ALLOC_FETCH_COLUMN_LIT(VTAB, IDX, LIT)                 \
-    do {                                                       \
-        /* sizeof("txt") includes the trailing '\0' */         \
-        size_t _n__ = sizeof(LIT);                             \
-        TRY_CALLOC((VTAB)->columns[(IDX)], _n__);              \
-        memcpy((VTAB)->columns[(IDX)], (LIT), _n__);           \
-        (VTAB)->column_lens[(IDX)] = _n__;\
-    } while (0)
 
 /* For debug logs */
 #ifdef NDEBUG
@@ -79,19 +36,6 @@ SQLITE_EXTENSION_INIT1
       printf("fetch-dbg> " __VA_ARGS__);           \
     } while (0)
 #endif
-
-#define FREE(ptr)             \
-    do {                      \
-        if (ptr) {            \
-            free(ptr);        \
-            (ptr) = NULL;     \
-        }                     \
-    } while (0)
-
-/* max number of tokens valid inside a single xCreate argument for the table declaration */
-#define MAX_XCREATE_ARG_TOKENS 2
-
-// ---------------------------------------------------------------------
 
 struct curl_slist *curl_slist_from_headers_json(char *json_obj_str) {
     if (!json_obj_str) return NULL;
@@ -161,37 +105,6 @@ struct curl_slist *curl_slist_from_headers_json(char *json_obj_str) {
     return headers;
 }
 
-/**
- * Open 2 memstreams for Response headers and body.
- * On success, returns 0 and sets all outputs.
- * On failure, returns an errno-style code with no leaks.
- */
-static int open_response(
-    FILE **headers_stream, char **headers_buf, size_t *headers_size,
-    FILE **body_stream,    char **body_buf,    size_t *body_size
-) {
-    // Ensure known state for callers
-    *headers_stream = NULL; *headers_buf = NULL; *headers_size = 0;
-    *body_stream    = NULL; *body_buf    = NULL; *body_size    = 0;
-
-    FILE *hs = open_memstream(headers_buf, headers_size);
-    if (!hs)
-        return ENOMEM;
-
-    FILE *bs = open_memstream(body_buf, body_size);
-    if (!bs) {
-        // Clean up headers stream. After fclose, headers_buf may become a malloc'd "" that must be freed.
-        fclose(hs);
-        if (*headers_buf) free(*headers_buf);
-        *headers_buf = NULL; *headers_size = 0;
-        return ENOMEM;
-    }
-
-    *headers_stream = hs;
-    *body_stream    = bs;
-    return 0;
-}
-
 typedef struct {
     int status;
     const char *text;
@@ -216,33 +129,12 @@ static const status_entry_t STATUS_TABLE[] = {
 #define STATUS_TABLE_LEN sizeof(STATUS_TABLE) / sizeof(STATUS_TABLE[0])
 
 // lookup status text from static `STATUS_TABLE` from a status code
-static inline const char *fetch_status_text(int status) {
+static const char *fetch_status_text(int status) {
     for (size_t i = 0; i < STATUS_TABLE_LEN; ++i) {
         if (STATUS_TABLE[i].status == status)
             return STATUS_TABLE[i].text;
     }
     return "Unknown Status";
-}
-
-static const char *RESPONSE_TYPE_BASIC = "basic";
-static const char *RESPONSE_TYPE_CORS = "cors";
-static const char *RESPONSE_TYPE_OPAQUE = "opaque";
-static const char *RESPONSE_TYPE_OPAQUEREDIRECT = "opaqueredirect";
-static const char *RESPONSE_TYPE_ERROR = "error";
-
-static int is_same_origin(const char *a, const char *b) {
-    // Compares scheme://host:port — NOT full URLs
-    // For now, just match the prefix up to the third slash
-    if (!a || !b)
-        return 0;
-
-    const char *end_a = strstr(a + strlen("https://"), "/");
-    const char *end_b = strstr(b + strlen("https://"), "/");
-
-    size_t len_a = end_a ? (size_t)(end_a - a) : strlen(a);
-    size_t len_b = end_b ? (size_t)(end_b - b) : strlen(b);
-
-    return len_a == len_b && strncmp(a, b, len_a) == 0;
 }
 
 typedef struct {
@@ -283,22 +175,6 @@ typedef struct {
      * How big is PAYLOAD
      */
     size_t payload_len;
-     
-    //
-    // struct {
-    //     char *url;
-    //     char *headers;
-    //     char *body;
-    // } request;
-    //
-    // struct {
-    //     uint16_t status;
-    //     char *body;
-    //     char *url;
-    //     char *headers;
-    //     bool redirected;
-    // } response;
-
 } Fetch;
 
 /// Cursor
@@ -321,10 +197,15 @@ static bool is_key_body(char *key) {
 // For tokens "fetch" (module name), "main" (schema), "patients" (vtable name), and
 // at least 1 argument for the url argument
 #define MIN_ARGC 4
+
 // "fetch", "{schema}", "{vtable_name}", "{?url}", "{?body}", 
 // "{?headers}", ... optional static column declarations
 #define MAX_FETCH_ARGC 6
 
+/**
+ * Run a GET request to URL over tcp sockets using curl. Size of body
+ * written out to BODY_SIZE.
+ */
 static char *GET(const char *url, size_t *body_size) {
     CURL *curl = curl_easy_init();
     if (!curl) {
@@ -344,6 +225,7 @@ static char *GET(const char *url, size_t *body_size) {
                 curl_easy_strerror(rc)); 
         return NULL;
     }
+    curl_easy_cleanup(curl);
     return buffer;
 }
 
@@ -356,40 +238,6 @@ static int index_of_key(char *key) {
         // headers
         return 2;
     }
-}
-
-static char **resolve_arguments(const char *const*argv, int argc, int *num_resolved) {
-    char **fetch_args = calloc(3, sizeof(char *));
-    for (int i = 3; i < MAX_FETCH_ARGC; i++ ){
-        const char *arg = argv[i];
-        const char *eq  = strchr(arg, '=');
-        if (!eq) {
-            // no named argument so we assume positional
-            fetch_args[(*num_resolved)++] = remove_all(arg, 0, '\''); 
-            continue;
-        }
-
-        const char *kbeg = arg, *kend = eq;
-        const char *vbeg = eq + 1, *vend = arg + strlen(arg);
-
-        trim_slice(&kbeg, &kend);
-        trim_slice(&vbeg, &vend);
-
-        char *key = trim(kbeg, kend);
-        char *value = trim(vbeg, vend);
-
-        if (!key || !value) {
-            free(key);
-            free(value);
-            break;
-        }
-
-        // Write out vtab's fields based on the user key arg
-        fetch_args[index_of_key(key)] = remove_all(value, 0, '\'');
-        (*num_resolved)++;
-
-    }
-    return fetch_args;
 }
 
 static Fetch *fetch_alloc(sqlite3 *db, int argc,
@@ -405,13 +253,15 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     size_t num_columns = argc - num_fetch_args;
     vtab->columns = malloc(sizeof(column_def *) * num_columns);
 
+    /* max number of tokens valid inside a single xCreate argument for the table declaration */
+    int MAX_ARG_TOKENS = 2;
     sqlite3_str_appendall(s, "CREATE TABLE x(");
     for (int i = argc - num_fetch_args - 1; i < argc; i++) {
         const char *arg = argv[i];
         sqlite3_str_appendall(s, arg);
 
         int tokens_size = 0;
-        int token_lens[MAX_XCREATE_ARG_TOKENS];
+        int token_lens[MAX_ARG_TOKENS];
         char **tokens = split(arg, ' ', &tokens_size, token_lens);
 
         char *tok_col = tokens[0];
@@ -432,44 +282,6 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     sqlite3_str_appendall(s, ")");
     vtab->schema = sqlite3_str_finish(s);
     return vtab;
-}
-
-typedef enum {
-    FETCH_METHOD_DELETE,
-    FETCH_METHOD_GET,
-    FETCH_METHOD_PATCH,
-    FETCH_METHOD_POST,
-    FETCH_METHOD_PUT
-} fetch_method_e;
-
-static CURL *fetchcurl(const char *url, fetch_method_e method, FILE *req_headers, FILE *req_body, struct curl_slist *res_headers, FILE *res_body) {
-    CURL *curl = curl_easy_init();
-    if (!curl)
-        return NULL;
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, req_body);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, req_headers);
-
-    switch (method) {
-        case FETCH_METHOD_DELETE:
-            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
-            break;
-        case FETCH_METHOD_GET:
-            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "GET");
-            break;
-        case FETCH_METHOD_PATCH:
-            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PATCH");
-            break;
-        case FETCH_METHOD_POST:
-            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "POST");
-            break;
-        case FETCH_METHOD_PUT:
-            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
-            break;
-        default:
-            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "GET");
-    }
-    return curl;
 }
 
 char **get_argument_labels(const char *const *argv, int argc) {
@@ -662,12 +474,30 @@ static int x_best_index(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
     return 0;
 }
 
+/**
+ * Cleanup virtual table state pointed to be P_VTAB.
+ * Serves as both xDestroy and xDisconnect for the vtable.
+ */
 static int x_disconnect(sqlite3_vtab *pvtab) {
     Fetch *vtab = (Fetch *) pvtab;
+    yyjson_doc_free(vtab->payload);
+    for (int i = 0; i < vtab->columns_len; i++) {
+        if (vtab->columns[i]) {
+            if (vtab->columns[i]->name) {
+                free(vtab->columns[i]->name);
+            }
+        }
+    }
+    free(vtab->columns);
+
+    sqlite3_free(vtab->schema);
     sqlite3_free(pvtab);
     return SQLITE_OK;
 }
 
+/**
+ * Initialize fetch cursor at P_VTAB's cursor PP_CURSOR with count = 0.
+ */
 static int x_open(sqlite3_vtab *pvtab, sqlite3_vtab_cursor **pp_cursor) {
     Fetch *fetch = (Fetch *) pvtab;
     fetch_cursor_t *cur = sqlite3_malloc(sizeof(fetch_cursor_t));
@@ -676,9 +506,8 @@ static int x_open(sqlite3_vtab *pvtab, sqlite3_vtab_cursor **pp_cursor) {
     }
     memset(cur, 0, sizeof(fetch_cursor_t));
 
-    yyjson_val *rows = yyjson_doc_get_root(fetch->payload);
     cur->count = 0;
-
+    cur->val = 0;
     *pp_cursor = (sqlite3_vtab_cursor *)cur;
     (*pp_cursor)->pVtab = pvtab;
     return SQLITE_OK;
