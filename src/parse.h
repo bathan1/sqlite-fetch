@@ -8,6 +8,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+char *to_lower(char *s, size_t len) {
+    char *lowercased = malloc(len + 1);
+    for (int i = 0; i < len; i++) {
+        lowercased[i] = tolower(s[i]);
+    }
+    lowercased[len] = 0;
+    return lowercased;
+}
+
 static void trim_slice(const char **begin, const char **end) {
     // *begin .. *end is half-open, end points one past last char
     while (*begin < *end && isspace((unsigned char)**begin)) (*begin)++;

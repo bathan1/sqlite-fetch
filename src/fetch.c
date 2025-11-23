@@ -22,6 +22,10 @@ SQLITE_EXTENSION_INIT1
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #endif
 
+// arbitrary
+#define MAX_COLUMN_COUNT 128
+
+#define FETCH_ARGS_OFFSET 3
 
 #define FETCH_URL 0
 #define FETCH_BODY 1
@@ -36,6 +40,25 @@ SQLITE_EXTENSION_INIT1
       printf("fetch-dbg> " __VA_ARGS__);           \
     } while (0)
 #endif
+
+/**
+ * Takes out double quoted column names.
+ *
+ * @b Example
+ * @code
+ *     char *userId = "\"userId\"";
+ *     normalize_column_name(userId, strlen(userId));
+ *     bool is_stripped = strncmp(userId, "userId", 6) == 0;
+ *     printf("%s\n", is_stripped ? "yup" : "nah");
+ * @endcode
+ */
+void normalize_column_name(char *str, size_t *len) {
+    if (str[0] == '"') {
+        *len -= 2;
+        memmove(str, str + 1, *len);
+        str[*len] = 0;
+    }
+}
 
 struct curl_slist *curl_slist_from_headers_json(char *json_obj_str) {
     if (!json_obj_str) return NULL;
@@ -140,6 +163,9 @@ static const char *fetch_status_text(int status) {
 typedef struct {
     char *name;
     size_t name_len;
+    char *typename;
+    size_t typename_len;
+    char *json_typename;
 } column_def;
 
 /**
@@ -240,8 +266,24 @@ static int index_of_key(char *key) {
     }
 }
 
+static yyjson_doc *array_wrap(yyjson_val *val) {
+    yyjson_mut_doc *mdoc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *arr = yyjson_mut_arr(mdoc);
+    yyjson_mut_doc_set_root(mdoc, arr);
+
+    yyjson_mut_val *copied = yyjson_val_mut_copy(mdoc, val);
+    yyjson_mut_arr_add_val(arr, copied);
+    yyjson_doc *im_doc = yyjson_mut_doc_imut_copy(mdoc, NULL);
+    yyjson_mut_doc_free(mdoc);
+    return im_doc;
+}
+
 static Fetch *fetch_alloc(sqlite3 *db, int argc,
-                             const char *const *argv, size_t num_fetch_args) {
+                          const char *const *argv,
+                          size_t num_fetch_args,
+                          yyjson_doc *payload_doc,
+                          size_t payload_size)
+{
     Fetch *vtab = sqlite3_malloc(sizeof(Fetch));
     if (!vtab) {
         fprintf(stderr, "sqlite3_malloc() out of memory\n");
@@ -250,33 +292,127 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     memset(vtab, 0, sizeof(Fetch));
     sqlite3_str *s = sqlite3_str_new(db);
 
-    size_t num_columns = argc - num_fetch_args;
+    int num_columns = argc - (num_fetch_args + FETCH_ARGS_OFFSET);
+
+
+    yyjson_val *root = yyjson_doc_get_root(payload_doc);
+    vtab->payload_len = yyjson_arr_size(root);
+    vtab->payload = payload_doc;
+    if (num_columns < 0) {
+        fprintf(stderr, "computed more fetch arguments than possible %d\n", FETCH_ARGS_OFFSET);
+        sqlite3_free(s);
+        sqlite3_free(vtab);
+        return NULL;
+    }
+
     vtab->columns = malloc(sizeof(column_def *) * num_columns);
+    if (num_columns == 0) {
+        if (yyjson_arr_size(root) == 0) {
+            fprintf(
+                stderr,
+                "dynamic schema needs at least 1 json element in the response body\n"
+            );
+            sqlite3_free(s);
+            sqlite3_free(vtab);
+            return NULL;
+        }
+        // then we take the first object from the payload
+        // and use those keys as the columns
+        yyjson_val *head = yyjson_arr_get_first(root);
+        if (yyjson_get_type(head) != YYJSON_TYPE_OBJ) {
+            fprintf(
+                stderr,
+                "dynamic schema expected head type to be object but got %s\n",
+                yyjson_get_type_desc(head)
+            );
+            sqlite3_free(s);
+            sqlite3_free(vtab);
+            return NULL;
+        }
+        yyjson_val *key = 0, *value = 0;
+        int index = 0, max = 0;
+        yyjson_obj_foreach(head, index, max, key, value) {
+            const char *key_str = yyjson_get_str(key);
+            column_def *def = malloc(sizeof(column_def));
+            def->name = strdup(key_str);
+            def->name_len = strlen(key_str);
+
+            yyjson_type value_type = yyjson_get_type(value);
+            switch (value_type) {
+                case YYJSON_TYPE_STR: {
+                    def->typename = strdup("text");
+                    def->json_typename = strdup("string");
+                    break;
+                }
+                case YYJSON_TYPE_ARR: {
+                    def->typename = strdup("text");
+                    def->json_typename = strdup("array");
+                    break;
+                }
+                case YYJSON_TYPE_OBJ: {
+                    def->typename = strdup("text");
+                    def->json_typename = strdup("object");
+                    break;
+                }
+                case YYJSON_TYPE_NUM: {
+                    if (yyjson_is_real(value)) {
+                        def->typename = strdup("float");
+                    } else if (yyjson_is_sint(value) || yyjson_is_uint(value)) {
+                        def->typename = strdup("int");
+                    } else {
+                        def->typename = strdup("float");
+                    }
+                    def->json_typename = strdup("number");
+                    break;
+                }
+                case YYJSON_TYPE_BOOL: {
+                    def->typename = strdup("text");
+                    def->json_typename = strdup("boolean");
+                    break;
+                }
+                default:
+                    def->typename = strdup("text");
+                    def->json_typename = strdup("string");
+            }
+
+            vtab->columns[index] = def;
+        }
+        num_columns = index;
+    } else {
+        int index = 0;
+        for (int i = argc - num_fetch_args - 1; i < argc; i++) {
+            const char *arg = argv[i];
+            // sqlite3_str_appendall(s, arg);
+
+            int tokens_size = 0;
+            int token_lens[2];
+            char **tokens = split(arg, ' ', &tokens_size, token_lens);
+
+            char *tok_col = tokens[0];
+            char *tok_col_type = tokens[1];
+            size_t tok_col_len = token_lens[0];
+            int tok_col_type_len = token_lens[1];
+
+            normalize_column_name(tok_col, &tok_col_len);
+
+            column_def *def = malloc(sizeof(column_def));
+            def->name = tok_col;
+            def->name_len = tok_col_len;
+            def->typename = to_lower(tok_col_type, tok_col_len);
+
+            vtab->columns[index++] = def;
+        }
+    }
+    vtab->columns_len = num_columns;
 
     /* max number of tokens valid inside a single xCreate argument for the table declaration */
     int MAX_ARG_TOKENS = 2;
     sqlite3_str_appendall(s, "CREATE TABLE x(");
-    for (int i = argc - num_fetch_args - 1; i < argc; i++) {
-        const char *arg = argv[i];
-        sqlite3_str_appendall(s, arg);
+    for (int i = 0; i < num_columns; i++) {
+        column_def *def = vtab->columns[i];
+        sqlite3_str_appendf(s, "%s %s", def->name, def->typename);
 
-        int tokens_size = 0;
-        int token_lens[MAX_ARG_TOKENS];
-        char **tokens = split(arg, ' ', &tokens_size, token_lens);
-
-        char *tok_col = tokens[0];
-        int tok_col_len = token_lens[0];
-        if (tok_col[0] == '"') {
-            tok_col_len = tok_col_len - 2;
-            memmove(tok_col, tok_col + 1, tok_col_len);
-            tok_col[tok_col_len] = 0;
-        }
-        column_def *column = malloc(sizeof(*column));
-        column->name = tok_col;
-        column->name_len = tok_col_len;
-        vtab->columns[vtab->columns_len++] = column;
-
-        if (i + 1 < argc)
+        if (i + 1 < num_columns)
             sqlite3_str_appendall(s, ",");
     }
     sqlite3_str_appendall(s, ")");
@@ -285,10 +421,9 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
 }
 
 char **get_argument_labels(const char *const *argv, int argc) {
-    int ARGS_OFFSET = 3;
     int MAX_NUM_FETCH_ARGS = 3;
     char **fetch_args = calloc(MAX_NUM_FETCH_ARGS, sizeof(char *));
-    for (int i = ARGS_OFFSET; i < argc; i++) {
+    for (int i = FETCH_ARGS_OFFSET; i < argc; i++) {
         const char *arg = argv[i];
         const char *eq  = strchr(arg, '=');
         if (!eq) {
@@ -328,42 +463,32 @@ static bool has_whitespace(const char *s) {
 
 char **get_fetch_args(const char *const *argv, int argc, size_t *fetch_args_count) {
     // "fetch (module name)", "main (schema name)", "(table name)"
-    int ARGS_OFFSET = 3;
     char **init = get_argument_labels(argv, argc);
     if (!init[FETCH_URL]) {
+        int index = FETCH_ARGS_OFFSET + FETCH_URL;
         // just let curl crash if url is invalid
-        const char *url_arg = argv[ARGS_OFFSET + FETCH_URL];
+        const char *url_arg = argv[index];
         size_t url_len = strlen(url_arg);
         init[FETCH_URL] = remove_all(url_arg, &url_len, '\'');
         *fetch_args_count += 1;
     }
     if (!init[FETCH_BODY]) {
-        const char *body_arg = argc > ARGS_OFFSET + FETCH_BODY ? argv[ARGS_OFFSET + FETCH_BODY] : "$";
-        if (!has_whitespace(body_arg)) {
+        int index = FETCH_ARGS_OFFSET + FETCH_BODY;
+        const char *body_arg = argc > index ? argv[index] : "$";
+        if (!has_whitespace(body_arg) && strncmp(body_arg, "$", 1) != 0) {
             *fetch_args_count += 1;
         }
         size_t body_len = strlen(body_arg);
         init[FETCH_BODY] = remove_all(body_arg, &body_len, '\'');
     }
     if (!init[FETCH_HEADERS]) {
-        init[FETCH_HEADERS] = strdup(argc > ARGS_OFFSET + FETCH_HEADERS ? argv[ARGS_OFFSET + FETCH_HEADERS] : " ");
+        int index = FETCH_ARGS_OFFSET + FETCH_HEADERS;
+        init[FETCH_HEADERS] = strdup(argc > index ? argv[index] : " ");
         if (!has_whitespace(init[FETCH_HEADERS])) {
             *fetch_args_count += 1;
         }
     }
     return init;
-}
-
-static yyjson_doc *array_wrap(yyjson_val *val) {
-    yyjson_mut_doc *mdoc = yyjson_mut_doc_new(NULL);
-    yyjson_mut_val *arr = yyjson_mut_arr(mdoc);
-    yyjson_mut_doc_set_root(mdoc, arr);
-
-    yyjson_mut_val *copied = yyjson_val_mut_copy(mdoc, val);
-    yyjson_mut_arr_add_val(arr, copied);
-    yyjson_doc *im_doc = yyjson_mut_doc_imut_copy(mdoc, NULL);
-    yyjson_mut_doc_free(mdoc);
-    return im_doc;
 }
 
 /**
@@ -392,13 +517,6 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
     char **fetch_args = get_fetch_args(argv, argc, &num_fetch_args);
 
     char *url = fetch_args[FETCH_URL];
-    char *body = fetch_args[FETCH_BODY];
-
-    *pp_vtab = (sqlite3_vtab *) fetch_alloc(pdb, argc, argv, num_fetch_args);
-    Fetch *vtab = (Fetch *) *pp_vtab;
-    if (!vtab) { 
-        return SQLITE_NOMEM;
-    }
 
     size_t payload_size = 0;
     char *payload = GET(url, &payload_size);
@@ -406,7 +524,6 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
         fprintf(stderr, "GET: fetch failed on url %s\n", url);
         return SQLITE_ERROR;
     }
-
     yyjson_doc *doc = yyjson_read(payload, payload_size, 0);
     yyjson_val *root = yyjson_doc_get_root(doc);
     if (!yyjson_is_arr(root) && !yyjson_is_obj(root)) {
@@ -422,8 +539,14 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
         doc = new;
         root = yyjson_doc_get_root(doc);
     }
-    vtab->payload_len = yyjson_arr_size(root);
-    vtab->payload = doc;
+
+    *pp_vtab = (sqlite3_vtab *) fetch_alloc(pdb, argc, argv, num_fetch_args, doc, payload_size);
+    Fetch *vtab = (Fetch *) *pp_vtab;
+    if (!vtab) { 
+        return SQLITE_NOMEM;
+    }
+
+
 
     rc += sqlite3_declare_vtab(pdb, vtab->schema);
     return rc;
@@ -548,6 +671,18 @@ static int x_next(sqlite3_vtab_cursor *pcursor) {
     return SQLITE_OK;
 }
 
+static void json_bool_result(
+    sqlite3_context *pctx,
+    column_def *def,
+    yyjson_val *column_val
+) {
+    if (strncmp(def->typename, "int", 3) == 0 || strncmp(def->typename, "float", 5) == 0) {
+        sqlite3_result_int(pctx, yyjson_get_bool(column_val));
+    } else {
+        sqlite3_result_text(pctx, yyjson_get_bool(column_val) ? "true" : "false", -1, SQLITE_TRANSIENT);
+    }
+}
+
 /** Populates the Fetch row */
 static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
                     int icol) {
@@ -566,7 +701,7 @@ static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
             sqlite3_result_int(pctx, yyjson_get_int(column));
             break;
         case YYJSON_TYPE_BOOL:
-            sqlite3_result_text(pctx, yyjson_get_bool(column) ? "true" : "false", 0, SQLITE_TRANSIENT);
+            json_bool_result(pctx, vtab->columns[icol], column);
             break;
         case YYJSON_TYPE_ARR:
         case YYJSON_TYPE_OBJ: {
