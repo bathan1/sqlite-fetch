@@ -29,6 +29,19 @@ else()
   set(ARCH "${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
+if(PLATFORM STREQUAL "linux")
+    if (ARCH STREQUAL "x64")
+        # default is linux x64
+        set(SUFFIX "")
+    # anything else is 
+    else()
+        set(SUFFIX ".${PLATFORM}-${ARCH}")
+    endif()
+else()
+    set(SUFFIX ".${PLATFORM}-${ARCH}")
+endif()
+
+
 # ---------------- SQLite (headers-only; always fetched) ----------------
 # You can override: -D SQLITE_VERSION=3380000 -D SQLITE_YEAR=2022
 set(SQLITE_VERSION "3380000" CACHE STRING "sqlite src version")
@@ -191,7 +204,7 @@ if(BUILD_FETCH)
   add_library(fetch SHARED src/fetch.c)
   set_target_properties(fetch PROPERTIES
     PREFIX ""
-    OUTPUT_NAME "libfetch.${PLATFORM}-${ARCH}"
+    OUTPUT_NAME "libfetch${SUFFIX}"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
   )
 

@@ -354,6 +354,18 @@ char **get_fetch_args(const char *const *argv, int argc, size_t *fetch_args_coun
     return init;
 }
 
+static yyjson_doc *array_wrap(yyjson_val *val) {
+    yyjson_mut_doc *mdoc = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *arr = yyjson_mut_arr(mdoc);
+    yyjson_mut_doc_set_root(mdoc, arr);
+
+    yyjson_mut_val *copied = yyjson_val_mut_copy(mdoc, val);
+    yyjson_mut_arr_add_val(arr, copied);
+    yyjson_doc *im_doc = yyjson_mut_doc_imut_copy(mdoc, NULL);
+    yyjson_mut_doc_free(mdoc);
+    return im_doc;
+}
+
 /**
  * @example
  * ```sql
@@ -394,16 +406,24 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
         fprintf(stderr, "GET: fetch failed on url %s\n", url);
         return SQLITE_ERROR;
     }
-    vtab->payload = yyjson_read(payload, payload_size, 0);
 
-    // Check that root is an array
-    yyjson_val *root = yyjson_doc_get_root(vtab->payload);
-    if (!yyjson_is_arr(root)) {
+    yyjson_doc *doc = yyjson_read(payload, payload_size, 0);
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (!yyjson_is_arr(root) && !yyjson_is_obj(root)) {
         const char *typename = yyjson_get_type_desc(root);
-        fprintf(stderr, "Expected root 'body' pointer, but got %s\n", typename);
+        fprintf(stderr, "Expected PAYLOAD to be an array or an object, but got %s\n", typename);
         return SQLITE_ERROR;
     }
+    if (yyjson_is_obj(root)) {
+        // set doc to [ {...} ]
+        yyjson_doc *new = array_wrap(root);
+
+        yyjson_doc_free(doc);
+        doc = new;
+        root = yyjson_doc_get_root(doc);
+    }
     vtab->payload_len = yyjson_arr_size(root);
+    vtab->payload = doc;
 
     rc += sqlite3_declare_vtab(pdb, vtab->schema);
     return rc;
@@ -565,11 +585,10 @@ static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
     return SQLITE_OK;
 }
 
-/// API: `sqlite3_vtab.xEof()`
 static int x_eof(sqlite3_vtab_cursor *pcursor) {
     fetch_cursor_t *cursor = (fetch_cursor_t *) pcursor;
     Fetch *vtab = (Fetch *) pcursor->pVtab;
-    return cursor->count >= vtab->payload_len;
+    return cursor->count > vtab->payload_len;
 }
 
 /// API: `sqlite3_vtab.xRowid()`
