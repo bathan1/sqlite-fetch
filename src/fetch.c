@@ -76,6 +76,7 @@ int fetch(const char *url) {
     if (!URL) {
         return neg1(errno);
     }
+
     int sv[2] = {0};
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
         return neg1(errno);
@@ -92,7 +93,7 @@ int fetch(const char *url) {
     if (try_connect(sockfd, res) != 0) { url_free(URL); return neg1(ECONNREFUSED); }
 
     freeaddrinfo(res);
-    char *GET = string(
+    buffer *GET = string(
         "GET %s HTTP/1.1\r\n"
         "Host: %s\r\n"
         "User-Agent: yarts/1.0\r\n"
@@ -108,7 +109,7 @@ int fetch(const char *url) {
         url_free(URL);
         return neg1(errno);
     }
-    ssize_t sent = send(sockfd, GET, strlen(GET), 0);
+    ssize_t sent = send(sockfd, GET, len(GET), 0);
     if (sent < 0) {
         url_free(URL);
         return neg1(errno);
@@ -446,12 +447,7 @@ struct url_s *parse_url(const char *url) {
         return NULL;
     }
 
-    if (curl_url_set(u, CURLUPART_URL, url, 0) != CURLUE_OK) {
-        curl_url_cleanup(u);
-        errno = EINVAL;
-        return NULL;
-    }
-
+    curl_url_set(u, CURLUPART_URL, url, 0);
     struct url_s *URL = calloc(1, sizeof(struct url_s));
     if (!URL) {
         curl_url_cleanup(u);

@@ -201,7 +201,7 @@ if(BUILD_FETCH)
   find_package(OpenSSL REQUIRED)
 
   # -------- yarts target (shared) --------
-  add_library(yarts SHARED src/yarts.c)
+  add_library(yarts SHARED src/yarts.c src/fetch.c)
   set_target_properties(yarts PROPERTIES
     PREFIX ""
     OUTPUT_NAME "libyarts${SUFFIX}"

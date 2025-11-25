@@ -1,5 +1,6 @@
 // Copyright 2025 Nathanael Oh. All Rights Reserved.
 #include <sqlite3ext.h>
+#include <unistd.h>
 SQLITE_EXTENSION_INIT1
 
 #define NDEBUG
@@ -16,7 +17,7 @@ SQLITE_EXTENSION_INIT1
 #include <wchar.h>
 
 /* utils */
-#include "parse.h"
+#include "fetch.h"
 
 #ifndef MIN
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
@@ -193,32 +194,56 @@ static bool is_key_body(char *key) {
  * Run a GET request to URL over tcp sockets using curl. Size of body
  * written out to BODY_SIZE.
  */
-static char *GET(const char *url, size_t *payload_size) {
-    CURL *curl = curl_easy_init();
-    if (!curl) {
+static buffer *GET(const char *url) {
+    int fd = fetch(url);
+    if (fd < 0) {
+        perror("fetch");
         return NULL;
     }
 
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    char *buf = NULL;
-    FILE *stream = open_memstream(&buf, payload_size);
-    if (!stream) {
-        perror("open_memstream");
+    size_t cap = 4096;
+    size_t len = 0;
+    char *out = malloc(cap);
+    if (!out) {
+        close(fd);
         return NULL;
     }
 
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, stream);
-    // default is GET so we don't need to set it
-    // curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "GET");
-    CURLcode rc = curl_easy_perform(curl);
-    if (rc!= CURLE_OK) {
-        fprintf(stderr, "curl_easy_perform(): %s\n",
-                curl_easy_strerror(rc)); 
+    char buf[4096];
+    ssize_t n;
+
+    while ((n = recv(fd, buf, sizeof(buf), 0)) > 0) {
+        if (len + n + 1 > cap) {
+            size_t newcap = cap * 2;
+            while (newcap < len + n + 1)
+                newcap *= 2;
+
+            char *tmp = realloc(out, newcap);
+            if (!tmp) {
+                free(out);
+                close(fd);
+                return NULL;
+            }
+            out = tmp;
+            cap = newcap;
+        }
+
+        memcpy(out + len, buf, n);
+        len += n;
+    }
+
+    if (n < 0) {
+        perror("recv");
+        free(out);
+        close(fd);
         return NULL;
     }
-    fclose(stream);
-    curl_easy_cleanup(curl);
-    return buf;
+
+    out[len] = '\0';
+    close(fd);
+
+    buffer *encoded = append(&out, len);
+    return encoded;
 }
 
 static int index_of_key(char *key) {
@@ -771,13 +796,13 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
         remove_all(
             sqlite3_value_text(argv[FETCH_URL]), &size, '\'') 
         : strdup(vtab->default_url);
-    size_t len = 0;
-    char *payload = GET(url, &len);
-    if (len < 1) {
+
+    buffer *payload = GET(url);
+    if (len(payload) < 1) {
         println("no body from %s", url);
         return SQLITE_ERROR;
     }
-    yyjson_doc *doc = yyjson_read(payload, len, 0);
+    yyjson_doc *doc = yyjson_read(payload, len(payload), 0);
     yyjson_val *root = yyjson_doc_get_root(doc);
     if (!yyjson_is_arr(root) && !yyjson_is_obj(root)) {
         const char *typename = yyjson_get_type_desc(root);
