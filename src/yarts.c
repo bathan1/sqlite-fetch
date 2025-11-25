@@ -1,5 +1,4 @@
 // Copyright 2025 Nathanael Oh. All Rights Reserved.
-#include "cookie.h"
 #include <sqlite3ext.h>
 SQLITE_EXTENSION_INIT1
 
@@ -190,7 +189,7 @@ typedef struct {
      * */
     unsigned long columns_len;
 
-    int default_url_len;
+    size_t default_url_len;
 
     /**
      * A default url if one was set
@@ -293,7 +292,31 @@ static yyjson_doc *array_wrap(yyjson_val *val) {
     return im_doc;
 }
 
-column_def **init_columns(int num_columns) {
+enum {
+    COL_NAME = 0,
+    COL_TYPE,
+    COL_CST,
+    COL_CST_VAL
+};
+
+column_def **init_columns(int argc, const char *const *argv) {
+    bool has_url_column = false;
+    for (int i = FETCH_ARGS_OFFSET; i < argc; i++) {
+        const char *arg = argv[i];
+        int tokens_size = 0;
+        int token_len[4];
+        char **token = split(arg, ' ', &tokens_size, token_len);
+        has_url_column = has_url_column || 
+            token_len[COL_NAME] == 3 && strncmp(token[COL_NAME], "url", 3) == 0;
+
+        for (int i = 0; i < tokens_size; i++) {
+            free(token[i]);
+        }
+        free(token);
+    }
+    int num_columns = has_url_column ?
+        argc - FETCH_ARGS_OFFSET : 
+            argc - FETCH_ARGS_OFFSET + 1;
     column_def **columns = malloc(sizeof(column_def *) * num_columns);
     column_def *url_column = malloc(sizeof(column_def));
     url_column->is_hidden = true;
@@ -315,21 +338,13 @@ static Fetch *use_state(sqlite3 *db, int argc,
         return NULL;
     }
     memset(vtab, 0, sizeof(Fetch));
-
-    int num_columns = (argc - FETCH_ARGS_OFFSET) + 1;
     vtab->payload_len = 0;
     vtab->payload = 0;
-    vtab->columns = init_columns(num_columns);
+    vtab->columns = init_columns(argc, argv);
 
     int index = 1;
     for (int i = FETCH_ARGS_OFFSET; i < argc; i++) {
         const char *arg = argv[i];
-        enum {
-            COL_NAME = 0,
-            COL_TYPE,
-            COL_CST,
-            COL_CST_VAL
-        };
         int tokens_size = 0;
         int token_len[4];
         char **token = split(arg, ' ', &tokens_size, token_len);
@@ -346,7 +361,8 @@ static Fetch *use_state(sqlite3 *db, int argc,
             strncmp(token[COL_CST], "default", 7) == 0
         ) {
             vtab->default_url_len = token_len[COL_CST_VAL];
-            vtab->default_url = token[COL_CST_VAL];
+            vtab->default_url = remove_all(token[COL_CST_VAL], &vtab->default_url_len, '\'');
+            continue;
         }
 
         normalize_column_name(token[COL_NAME], &token_len[COL_NAME]);
@@ -359,7 +375,7 @@ static Fetch *use_state(sqlite3 *db, int argc,
 
         vtab->columns[index++] = def;
     }
-    vtab->columns_len = num_columns;
+    vtab->columns_len = index;
 
     /* max number of tokens valid inside a single xCreate argument for the table declaration */
     int MAX_ARG_TOKENS = 2;
@@ -367,17 +383,19 @@ static Fetch *use_state(sqlite3 *db, int argc,
     char *first_line = string("CREATE TABLE %s(url hidden text,", table_name);
     sqlite3_str *s = sqlite3_str_new(db);
     sqlite3_str_appendall(s, first_line);
-    for (int i = 1; i < num_columns; i++) {
+    for (int i = 1; i < vtab->columns_len; i++) {
         column_def *def = vtab->columns[i];
         sqlite3_str_appendf(s, "%s %s", def->name, def->typename);
 
-        if (i + 1 < num_columns)
+        if (i + 1 < vtab->columns_len)
             sqlite3_str_appendall(s, ",");
     }
     sqlite3_str_appendall(s, ")");
     vtab->schema = sqlite3_str_finish(s);
     free(first_line);
+
     println("schema: %s\n", vtab->schema);
+
     return vtab;
 }
 
@@ -404,6 +422,7 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
     int rc = SQLITE_OK;
     *pp_vtab = (sqlite3_vtab *) use_state(pdb, argc, argv);
     Fetch *vtab = (Fetch *) *pp_vtab;
+    printf("%s\n", vtab->schema);
     if (!vtab) { 
         return SQLITE_NOMEM;
     }
@@ -570,7 +589,6 @@ static void json_bool_result(
 /** Populates the Fetch row */
 static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
                     int icol) {
-    println("xColumn start %d", icol);
     fetch_cursor_t *cursor = (fetch_cursor_t *)pcursor;
     Fetch *vtab = (Fetch *)pcursor->pVtab;
 
@@ -578,7 +596,6 @@ static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
         return SQLITE_OK;
     }
     char *column_name = vtab->columns[icol]->name;
-    printf("%s\n", column_name);
     yyjson_val *column = yyjson_obj_get(cursor->val, column_name);
     yyjson_type typename = yyjson_get_type(column);
     switch (typename) {
@@ -606,7 +623,6 @@ static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
         default:
             sqlite3_result_null(pctx);
     }
-    println("xColumn end");
     return SQLITE_OK;
 }
 
