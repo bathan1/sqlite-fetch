@@ -2,7 +2,7 @@
 #include <sqlite3ext.h>
 SQLITE_EXTENSION_INIT1
 
-// #define NDEBUG
+#define NDEBUG
 #include <assert.h>
 
 #include <yyjson.h>
@@ -317,6 +317,7 @@ column_def **init_columns(int argc, const char *const *argv) {
     int num_columns = has_url_column ?
         argc - FETCH_ARGS_OFFSET : 
             argc - FETCH_ARGS_OFFSET + 1;
+
     column_def **columns = malloc(sizeof(column_def *) * num_columns);
     column_def *url_column = malloc(sizeof(column_def));
     url_column->is_hidden = true;
@@ -422,7 +423,6 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
     int rc = SQLITE_OK;
     *pp_vtab = (sqlite3_vtab *) use_state(pdb, argc, argv);
     Fetch *vtab = (Fetch *) *pp_vtab;
-    printf("%s\n", vtab->schema);
     if (!vtab) { 
         return SQLITE_NOMEM;
     }

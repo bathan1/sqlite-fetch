@@ -34,6 +34,12 @@ Load the extension:
 .load ./libyarts
 ```
 
+Optionally format the cli:
+
+```sql
+.mode box
+```
+
 This links the `fetch` virtual table library with SQLite.
 
 ## Write your Queries
@@ -62,8 +68,8 @@ To query all completed todos:
 
 ```sql
 select * from todos where 
-url = 'https://jsonplaceholder.typicode.com/todos';
-completed = 'true';
+url = 'https://jsonplaceholder.typicode.com/todos'
+and completed = 'true';
 ```
 
 If you only cared about the `id` and `title` fields, you
@@ -79,15 +85,30 @@ select * from todos
 where url = 'https://jsonplaceholder.typicode.com/todos';
 ```
 
-If you're only fetching from one server, you can set a default value for the `url` column 
-in the create virtual table statement:
+Since `url` is a hidden column, you can query the url column
+in a table valued function sugar syntax, which is equivalent
+to the above:
 
 ```sql
+select * from todos('https://jsonplaceholder.typicode.com/todos');
+```
+
+If you're only fetching from one server, you can set a default value 
+for the `url` column in the create virtual table statement:
+
+```sql
+drop table if exists todos;
 create virtual table todos using fetch (
     url text default 'https://jsonplaceholder.typicode.com/todos',
     id int,
     title text
 );
+```
 
+This way, you don't need to set the `url` column in each
+query:
+
+```sql
 select * from todos;
 ```
+
