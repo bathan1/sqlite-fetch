@@ -47,11 +47,11 @@ This links the `fetch` virtual table library with SQLite.
 Create a Virtual Table by declaring your expected payload shape with the `fetch` virtual table:
 
 ```sql
-create virtual table todos using fetch (
-    "userId" int,
-    id int,
-    title text,
-    completed text
+CREATE VIRTUAL TABLE todos USING fetch (
+    "userId" INT,
+    id INT,
+    title TEXT,
+    completed TEXT
 );
 ```
 
@@ -59,33 +59,33 @@ Fetch will include a `url HIDDEN TEXT` column into
 your virtual table, which will provide the url to fetch from.
 
 To fetch some `todos` from a json dummy api, for example,
-we set `url` equal to the endpoint in `select .. where` query:
+we set `url` equal to the endpoint in `SELECT ... WHERE ...` query:
 
 ```sql
-select * from todos
-where url = 'https://jsonplaceholder.typicode.com/todos' limit 5;
+SELECT * FROM todos
+WHERE url = 'https://jsonplaceholder.typicode.com/todos' LIMIT 5;
 ```
 
 To query all completed todos:
 
 ```sql
-select * from todos where 
+SELECT * FROM todos WHERE 
 url = 'https://jsonplaceholder.typicode.com/todos'
-and completed = 'true' limit 5;
+AND completed = 'true' LIMIT 5;
 ```
 
 If you only cared about the `id` and `title` fields, you
 can simply omit the other fields:
 
 ```sql
-drop table if exists todos;
-create virtual table todos using fetch (
-    id int,
-    title text
+DROP TABLE IF EXISTS todos;
+CREATE VIRTUAL TABLE todos USING fetch (
+    id INT,
+    title TEXT
 );
-select * from todos
-where url = 'https://jsonplaceholder.typicode.com/todos'
-limit 5;
+SELECT * FROM todos
+WHERE url = 'https://jsonplaceholder.typicode.com/todos'
+LIMIT 5;
 ```
 
 Since `url` is a hidden column, you can query the url column
@@ -93,19 +93,19 @@ in a table valued function sugar syntax, which is equivalent
 to the above:
 
 ```sql
-select * from todos('https://jsonplaceholder.typicode.com/todos')
-limit 5;
+SELECT * FROM todos('https://jsonplaceholder.typicode.com/todos')
+LIMIT 5;
 ```
 
 If you're only fetching from one server, you can set a default value 
 for the `url` column in the create virtual table statement:
 
 ```sql
-drop table if exists todos;
-create virtual table todos using fetch (
-    url text default 'https://jsonplaceholder.typicode.com/todos',
-    id int,
-    title text
+DROP TABLE IF EXISTS todos;
+CREATE VIRTUAL TABLE todos USING fetch (
+    url TEXT DEFAULT 'https://jsonplaceholder.typicode.com/todos',
+    id INT,
+    title TEXT
 );
 ```
 
@@ -113,6 +113,6 @@ This way, you don't need to set the `url` column in each
 query:
 
 ```sql
-select * from todos limit 5;
+SELECT * FROM todos LIMIT 5;
 ```
 

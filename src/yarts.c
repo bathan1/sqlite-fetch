@@ -61,74 +61,6 @@ void normalize_column_name(char *str, int *len) {
     }
 }
 
-struct curl_slist *curl_slist_from_headers_json(char *json_obj_str) {
-    if (!json_obj_str) return NULL;
-
-    yyjson_read_err err;
-    yyjson_doc *doc = yyjson_read_opts(json_obj_str, strlen(json_obj_str), 0, NULL, &err);
-    if (!doc) {
-        return NULL;
-    }
-
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    if (!yyjson_is_obj(root)) {
-        yyjson_doc_free(doc);
-        return NULL;
-    }
-
-    struct curl_slist *headers = NULL;
-
-    size_t idx, max;
-    yyjson_val *k, *v;
-    yyjson_obj_foreach(root, idx, max, k, v) {
-        const char *key = yyjson_get_str(k);
-        if (!key || !*key) continue;
-
-        char numbuf[64];
-        const char *val_cstr = NULL;
-        char *owned_val = NULL;
-
-        if (yyjson_is_str(v)) {
-            val_cstr = yyjson_get_str(v);
-        } else if (yyjson_is_null(v)) {
-            val_cstr = NULL; // means "Key:"
-        } else if (yyjson_is_bool(v)) {
-            val_cstr = yyjson_get_bool(v) ? "true" : "false";
-        } else if (yyjson_is_int(v)) {
-            snprintf(numbuf, sizeof(numbuf), "%lld", (long long)yyjson_get_sint(v));
-            val_cstr = numbuf;
-        } else if (yyjson_is_uint(v)) {
-            snprintf(numbuf, sizeof(numbuf), "%llu", (unsigned long long)yyjson_get_uint(v));
-            val_cstr = numbuf;
-        } else if (yyjson_is_real(v)) {
-            snprintf(numbuf, sizeof(numbuf), "%g", yyjson_get_real(v));
-            val_cstr = numbuf;
-        } else {
-            continue;
-        }
-
-        size_t key_len = strlen(key);
-        size_t val_len = val_cstr ? strlen(val_cstr) : 0;
-        size_t line_len = key_len + (val_cstr ? (2 + 1 + val_len) : 1) + 1; // "Key:" + '\0'
-        char *line = (char *)malloc(line_len);
-        if (!line) { curl_slist_free_all(headers); headers = NULL; break; }
-
-        if (val_cstr) {
-            snprintf(line, line_len, "%s: %s", key, val_cstr);
-        } else {
-            snprintf(line, line_len, "%s:", key);
-        }
-
-        headers = curl_slist_append(headers, line);
-        free(line);
-        free(owned_val);
-        if (!headers) break;
-    }
-
-    yyjson_doc_free(doc);
-    return headers;
-}
-
 typedef struct {
     int status;
     const char *text;
@@ -330,7 +262,7 @@ column_def **init_columns(int argc, const char *const *argv) {
     return columns;
 }
 
-static Fetch *use_state(sqlite3 *db, int argc,
+static Fetch *fetch_alloc(sqlite3 *db, int argc,
                           const char *const *argv)
 {
     Fetch *vtab = sqlite3_malloc(sizeof(Fetch));
@@ -421,7 +353,7 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
         return SQLITE_ERROR;
     }
     int rc = SQLITE_OK;
-    *pp_vtab = (sqlite3_vtab *) use_state(pdb, argc, argv);
+    *pp_vtab = (sqlite3_vtab *) fetch_alloc(pdb, argc, argv);
     Fetch *vtab = (Fetch *) *pp_vtab;
     if (!vtab) { 
         return SQLITE_NOMEM;
@@ -479,9 +411,12 @@ static int check_plan_mask(struct sqlite3_index_info *index_info,
     }
 
     if (!is_url_eq_cst) {
-        pVtab->zErrMsg = sqlite3_mprintf(
-            "fetch> Need a url = in the WHERE clause.");
-        return SQLITE_ERROR;
+        Fetch *vtab = (void *) pVtab;
+        if (!vtab->default_url || vtab->default_url_len == 0) {
+            pVtab->zErrMsg = sqlite3_mprintf(
+                "yarts> Fetch needs a url = in the WHERE clause if no default url is set.\n");
+            return SQLITE_ERROR;
+        }
     }
 
     return SQLITE_OK;
@@ -494,11 +429,6 @@ static int x_best_index(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
     int argPos = 1;
     int planMask = 0;
     Fetch *vtab = (Fetch *)pVTab;
-
-    if (vtab->default_url_len > 0 && vtab->default_url) {
-        println("Default url found, don't need to check index_info...");
-        return SQLITE_OK;
-    }
 
     for (int i = 0; i < pIdxInfo->nConstraint; i++) {
         struct sqlite3_index_constraint *cst = &pIdxInfo->aConstraint[i];
@@ -570,8 +500,8 @@ static int x_next(sqlite3_vtab_cursor *pcursor) {
     println("xNext");
     Fetch *vtab = (Fetch *) pcursor->pVtab;
     fetch_cursor_t *cursor = (fetch_cursor_t *) pcursor;
-    println("cursor->count before=%d", cursor->count);
-    cursor->val = yyjson_arr_get(yyjson_doc_get_root(vtab->payload), cursor->count);
+    cursor->val = yyjson_arr_get(
+        yyjson_doc_get_root(vtab->payload), cursor->count);
     cursor->count++;
     return SQLITE_OK;
 }
@@ -649,8 +579,12 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
         cur->pVtab->zErrMsg = sqlite3_mprintf("yarts: incorrect usage of fetch, need at least 1 argument if no default url was set.\n");
         return SQLITE_ERROR;
     }
-    char *url = (vtab->default_url_len > 0 && vtab->default_url) ?
-        vtab->default_url : (char *) sqlite3_value_text(argv[FETCH_URL]);
+    char *argurl = argc > 0 ? sqlite3_value_text(argv[FETCH_URL]) : vtab->default_url;
+    size_t size = argc > 0 ? strlen(argurl) : vtab->default_url_len;
+    char *url = argc > 0 ? 
+        remove_all(
+            sqlite3_value_text(argv[FETCH_URL]), &size, '\'') 
+        : strdup(vtab->default_url);
     size_t len = 0;
     char *payload = GET(url, &len);
     if (len < 1) {

@@ -29,32 +29,31 @@ static void trim_slice(const char **begin, const char **end) {
  * compute `strlen` on STR to handle the removal.
  */
 char *remove_all(const char *str, size_t *n, char ch) {
-    size_t len = (n != NULL) ? *n : 0;
-    if (len < 1) {
-        len = strlen(str);
-    }
+    size_t len = (n && *n) ? *n : strlen(str);
 
-    char *new = (char *) malloc(len);
+    // Allocate len + 1 so we always have room for '\0'
+    char *new = malloc(len + 1);
     if (!new) {
         errno = ENOMEM;
         return NULL;
     }
-    int new_index = 0;
 
-    for (int i = 0; i < len; i++) {
-        char curr_ch = str[i];
-        if (curr_ch != ch) {
-            new[new_index++] = curr_ch;
+    size_t new_index = 0;
+
+    for (size_t i = 0; i < len; i++) {
+        if (str[i] != ch) {
+            new[new_index++] = str[i];
         }
     }
-    // new_index is length if there are no matches on CH.
-    if (new_index != len) {
-        new[new_index] = '\0';
-        new = realloc(new, new_index);
-        if (n) {
-            *n = new_index;
-        }
-    }
+
+    new[new_index] = '\0';  // ALWAYS safe now
+
+    // Resize to the actual size needed (new_index + 1 bytes)
+    char *shrunk = realloc(new, new_index + 1);
+    if (shrunk) new = shrunk;
+
+    if (n) *n = new_index;
+
     return new;
 }
 
