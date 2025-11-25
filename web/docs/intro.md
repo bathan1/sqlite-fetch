@@ -55,13 +55,15 @@ create virtual table todos using fetch (
 );
 ```
 
-The virtual table will include a `url hidden text` column into 
+Fetch will include a `url HIDDEN TEXT` column into 
 your virtual table, which will provide the url to fetch from.
-To fetch some `todos` from a json dummy api, for example:
+
+To fetch some `todos` from a json dummy api, for example,
+we set `url` equal to the endpoint in `select .. where` query:
 
 ```sql
 select * from todos
-where url = 'https://jsonplaceholder.typicode.com/todos';
+where url = 'https://jsonplaceholder.typicode.com/todos' limit 5;
 ```
 
 To query all completed todos:
@@ -69,7 +71,7 @@ To query all completed todos:
 ```sql
 select * from todos where 
 url = 'https://jsonplaceholder.typicode.com/todos'
-and completed = 'true';
+and completed = 'true' limit 5;
 ```
 
 If you only cared about the `id` and `title` fields, you
@@ -82,7 +84,8 @@ create virtual table todos using fetch (
     title text
 );
 select * from todos
-where url = 'https://jsonplaceholder.typicode.com/todos';
+where url = 'https://jsonplaceholder.typicode.com/todos'
+limit 5;
 ```
 
 Since `url` is a hidden column, you can query the url column
@@ -90,7 +93,8 @@ in a table valued function sugar syntax, which is equivalent
 to the above:
 
 ```sql
-select * from todos('https://jsonplaceholder.typicode.com/todos');
+select * from todos('https://jsonplaceholder.typicode.com/todos')
+limit 5;
 ```
 
 If you're only fetching from one server, you can set a default value 
@@ -109,6 +113,6 @@ This way, you don't need to set the `url` column in each
 query:
 
 ```sql
-select * from todos;
+select * from todos limit 5;
 ```
 

@@ -567,8 +567,10 @@ static int x_close(sqlite3_vtab_cursor *cur) {
 }
 
 static int x_next(sqlite3_vtab_cursor *pcursor) {
+    println("xNext");
     Fetch *vtab = (Fetch *) pcursor->pVtab;
     fetch_cursor_t *cursor = (fetch_cursor_t *) pcursor;
+    println("cursor->count before=%d", cursor->count);
     cursor->val = yyjson_arr_get(yyjson_doc_get_root(vtab->payload), cursor->count);
     cursor->count++;
     return SQLITE_OK;
@@ -590,6 +592,7 @@ static void json_bool_result(
 static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
                     int icol) {
     fetch_cursor_t *cursor = (fetch_cursor_t *)pcursor;
+    println("xColumn, cursor->count=%d", cursor->count);
     Fetch *vtab = (Fetch *)pcursor->pVtab;
 
     if (vtab->columns[icol]->is_hidden) {
@@ -640,6 +643,7 @@ static int x_rowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
 
 static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
                     int argc, sqlite3_value **argv) {
+    println("xFilter");
     Fetch *vtab = (void *) cur->pVtab;
     if (argc + vtab->default_url_len == 0) {
         cur->pVtab->zErrMsg = sqlite3_mprintf("yarts: incorrect usage of fetch, need at least 1 argument if no default url was set.\n");
@@ -669,6 +673,9 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
     }
     vtab->payload_len = yyjson_arr_size(root);
     vtab->payload = doc;
+    fetch_cursor_t *Cur = (void *) cur;
+    Cur->val = yyjson_arr_get_first(root);
+    Cur->count = 1;
     return SQLITE_OK;
 };
 
