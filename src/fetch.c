@@ -1,37 +1,47 @@
+#include "fetch.h"
 #include <netdb.h>
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
-#include <stdarg.h>
-#include <stdlib.h>
-#include <stdio.h>
+#include <curl/curl.h>
 
 /** Sets {@link errno} to ERROR_CODE so you don't have to every time. */
 static void *null(int error_code);
 static long long zero (int error_code);
 static long long neg1 (int error_code);
 
-struct buffer_s;
-typedef struct buffer_s buffer_t;
-
-static int buffer_free(struct buffer_s *buffer);
-static struct buffer_s *buffer_alloc();
-
-// "Move" ownership of STRING to returned BUFFER. If LENGTH is 0, then 
-// `strlen` is computed on STRING.
-static struct buffer_s *buffer_mv_string(char *string, int length);
-
 /**
  * Taken from Web API URL, word 4 word, bar 4 bar.
  */
-struct url_s;
+struct url_s {
+    /**
+     * A string containing the domain of the URL.
+     *
+     * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL}
+     */
+    buffer *hostname;
+
+    /**
+     * A string containing an initial '/' followed by the path of the URL, 
+     * not including the query string or fragment.
+     *
+     * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/pathname}
+     */
+    buffer *pathname;
+
+    /**
+     * A string containing the port number of the URL.
+     *
+     * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/port}
+     */
+    buffer *port;
+};
 
 /** Alias for {@link struct url_s} */
 typedef struct url_s url_t;
+static char *host(url_t *url);
 
 static int url_free(struct url_s *url);
-static struct url_s *url_alloc();
-static char *string(const char *fmt, ...);
 static int tcp_getaddrinfo(struct url_s *url, struct addrinfo **wout);
 static int try_socket(struct addrinfo *addrinfo);
 static int try_connect(int sockfd, struct addrinfo *addrinfo);
@@ -84,7 +94,15 @@ int fetch(const char *url) {
     freeaddrinfo(res);
     char *GET = string(
         "GET %s HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "User-Agent: yarts/1.0\r\n"
+        "Accept: */*\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        URL->pathname,
+        host(URL)
     );
+
     if (!GET) {
         close(sockfd);
         url_free(URL);
@@ -116,113 +134,15 @@ long long neg1 (int error_code) {
     return zero(error_code) - 1;
 }
 
-struct buffer_s {
-    char *bytes;
-    /* 0 padding */
-    size_t size;
-};
-typedef struct buffer_s buffer_t;
-
-static int buffer_free(struct buffer_s *buffer) {
-    int count = 0;
-    if (!buffer) {
-        return count;
-    }
-    count++;
-
-    if (buffer->bytes) {
-        free(buffer->bytes);
-        count++;
-    }
-    free(buffer);
-    return count;
-}
-
-static struct buffer_s *buffer_alloc() {
-    struct buffer_s *buffer = malloc(sizeof(struct buffer_s));
-    if (!buffer) {
-        return null(ENOMEM);
-    }
-    buffer->size = 1;
-    buffer->bytes = calloc(1, sizeof(char));
-    return buffer;
-}
-
-typedef char buffer;
-
-static buffer *buffer_from_string(const char *s) {
-    size_t len = strlen(s);
-    char *p = malloc(len + 1 + sizeof(size_t));
-    if (!p) return NULL;
-    memcpy(p, s, len);
-    p[len] = '\0';
-    size_t *meta = (size_t *)(p + len + 1);
-    *meta = len;
-    return p;
-}
-
-// constant time lookup
-static size_t len(const buffer *p) {
-    size_t *meta = (size_t *)(p + strlen(p) + 1);
-    return *meta;
-}
-
-
-/**
- * "Move" ownership of STRING to returned BUFFER. If LENGTH
- * is 0, then `strlen` is computed on STRING.
- */
-static struct buffer_s *buffer_mv_string(char *string, int length) {
-    struct buffer_s *buffer = buffer_alloc();
-    if (!buffer) {
-        return null(ENOMEM);
-    }
-    free(buffer->bytes);
-    buffer->bytes = string;
-    buffer->size = (length > 0 ? length : strlen(string)) + 1;
-    return buffer;
-}
-
-/**
- * Taken from Web API URL.
- */
-struct url_s {
-    /**
-     * A string containing the domain of the URL.
-     *
-     * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL}
-     */
-    struct buffer_s *hostname;
-
-    /**
-     * A string containing an initial '/' followed by the path of the URL, 
-     * not including the query string or fragment.
-     *
-     * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/pathname}
-     */
-    struct buffer_s *pathname;
-
-    /**
-     * A string containing the port number of the URL.
-     *
-     * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/port}
-     */
-    struct buffer_s *port;
-};
-/** Alias for {@link struct url_s} */
-typedef struct url_s url_t;
 
 static char *host(url_t *url) {
-    if (!url) { return null(EINVAL); }
-    buffer_t *buffer = buffer_alloc();
-    if (!buffer) { return null(ENOMEM); }
+    if (!url || !url->hostname) { return null(EINVAL); }
 
-    if (url->hostname && url->port) {
-        if (url->hostname->size > 0 && url->port->size > 0)
-            return string("%s:%s", url->hostname->bytes, url->port->bytes);
-        else 
-            return strdup(url->hostname->bytes);
+    if (url->port) {
+        if (len(url->hostname) > 0 && len(url->port) > 0)
+            return string("%s:%s", url->hostname, url->port);
     }
+    return strdup(url->hostname);
 }
 
 static int url_free(struct url_s *url) {
@@ -233,60 +153,13 @@ static int url_free(struct url_s *url) {
     count++;
 
     if (url->hostname) {
-        count += buffer_free(url->hostname);
+        count += (free(url->hostname), 1);
     }
     if (url->pathname) {
-        count += buffer_free(url->pathname);
+        count += (free(url->pathname), 1);
     }
     return count;
 }
-
-struct url_s *url_alloc() {
-    struct url_s *url = malloc(sizeof(struct url_s));
-    if (!url) {
-        return null(ENOMEM);
-    }
-    url->hostname = buffer_alloc();
-    if (!url->hostname) {
-        url_free(url);
-        return null(ENOMEM);
-    }
-    url->pathname = buffer_alloc();
-    if (!url->pathname) {
-        url_free(url);
-        return null(ENOMEM);
-    }
-    return url;
-}
-
-static char *string(const char *fmt, ...) {
-    va_list ap;
-    va_list ap2;
-
-    // First pass: determine required size
-    va_start(ap, fmt);
-    va_copy(ap2, ap);
-
-    int needed = vsnprintf(NULL, 0, fmt, ap);
-    va_end(ap);
-
-    if (needed < 0) {
-        va_end(ap2);
-        return NULL;
-    }
-
-    char *buf = malloc(needed + 1);
-    if (!buf) {
-        va_end(ap2);
-        return NULL;
-    }
-
-    // Second pass: actually write
-    vsnprintf(buf, needed + 1, fmt, ap2);
-    va_end(ap2);
-    return buf;
-}
-
 
 static int tcp_getaddrinfo(
     struct url_s *url,
@@ -299,7 +172,7 @@ static int tcp_getaddrinfo(
         .ai_family=AF_INET,
         .ai_socktype=SOCK_STREAM
     };
-    int rc = getaddrinfo(url->hostname->bytes, url->port->bytes, &hints, wout);
+    int rc = getaddrinfo(url->hostname, url->port, &hints, wout);
     if (rc != 0) {
         perror("getaddrinfo");
         url_free(url);
@@ -556,30 +429,12 @@ static int parse_headers_and_forward(int netfd, int outfd)
     }
 }
 
-#include <curl/curl.h>
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
 
-// Helper: copy string into buffer_s
-static int buffer_set_cstr(buffer_t *buf, const char *src) {
-    if (!src) src = "";  // fallback
-
-    size_t len = strlen(src);
-    buf->bytes = malloc(len + 1);
-    if (!buf->bytes) return -1;
-
-    memcpy(buf->bytes, src, len + 1);
-    buf->size = len;
-    return 0;
-}
-
-// Free url_s on error
 static struct url_s *url_free_error(struct url_s *u) {
     if (!u) return NULL;
-    if (u->hostname)     buffer_free(u->hostname);
-    if (u->pathname) buffer_free(u->pathname);
-    if (u->port)     buffer_free(u->port);
+    if (u->hostname)     free(u->hostname);
+    if (u->pathname) free(u->pathname);
+    if (u->port)     free(u->port);
     free(u);
     return NULL;
 }
@@ -597,19 +452,11 @@ struct url_s *parse_url(const char *url) {
         return NULL;
     }
 
-    struct url_s *URL = calloc(1, sizeof(*URL));
+    struct url_s *URL = calloc(1, sizeof(struct url_s));
     if (!URL) {
         curl_url_cleanup(u);
         errno = ENOMEM;
         return NULL;
-    }
-
-    URL->hostname = buffer_alloc();
-    URL->pathname = buffer_alloc();
-    URL->port = buffer_alloc();
-    if (!URL->hostname || !URL->pathname || !URL->port) {
-        curl_url_cleanup(u);
-        return url_free_error(URL);
     }
 
     char *host_c = NULL;
@@ -620,16 +467,9 @@ struct url_s *parse_url(const char *url) {
     curl_url_get(u, CURLUPART_PATH, &path_c, 0);
     curl_url_get(u, CURLUPART_PORT, &port_c, CURLU_DEFAULT_PORT);
 
-    if (buffer_set_cstr(URL->hostname, host_c) < 0 ||
-        buffer_set_cstr(URL->pathname, path_c ? path_c : "/") < 0 ||
-        buffer_set_cstr(URL->port, port_c) < 0)
-    {
-        curl_free(host_c);
-        curl_free(path_c);
-        curl_free(port_c);
-        curl_url_cleanup(u);
-        return url_free_error(URL);
-    }
+    URL->hostname = string("%s", host_c);
+    URL->pathname = string("%s", path_c);
+    URL->port = string("%s", port_c);
 
     curl_free(host_c);
     curl_free(path_c);
@@ -639,9 +479,3 @@ struct url_s *parse_url(const char *url) {
     return URL;
 }
 
-int main() {
-    char *helloWorld = "hello world\n";
-    buffer *buf = buffer_from_string(helloWorld);
-    printf("%s", buf);
-    return 0;
-}
