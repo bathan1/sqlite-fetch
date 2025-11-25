@@ -579,7 +579,7 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
         cur->pVtab->zErrMsg = sqlite3_mprintf("yarts: incorrect usage of fetch, need at least 1 argument if no default url was set.\n");
         return SQLITE_ERROR;
     }
-    char *argurl = argc > 0 ? sqlite3_value_text(argv[FETCH_URL]) : vtab->default_url;
+    char *argurl = argc > 0 ? (char *) sqlite3_value_text(argv[FETCH_URL]) : vtab->default_url;
     size_t size = argc > 0 ? strlen(argurl) : vtab->default_url_len;
     char *url = argc > 0 ? 
         remove_all(

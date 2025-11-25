@@ -5,14 +5,15 @@ sidebar_position: 1
 # Introduction
 
 Yet Another Runtime TCP Stream for SQLite, or yarts for short,
-is an SQLite runtime extension that provides TCP networking capabilities to SQLite.
+is an SQLite runtime extension.
+
+It provides TCP networking capabilities to SQLite.
+
 Let's discover **yarts in less than 5 minutes**.
 
 ## Getting Started
 
 Get started by **installing the latest extension binary**.
-
-Or **try yarts immediately on the Web Assembly build** [here]().
 
 ### What you'll need
 
