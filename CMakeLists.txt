@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(fetch C)
+project(yarts C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -12,7 +12,7 @@ endif()
 # ---------------- Build toggles ----------------
 option(BUILD_FETCH        "Build the Fetch extension"                ON)
 option(BUILD_EXT          "Build other included SQLite extensions"         OFF)
-option(THIRDPARTY_STATIC  "Build libuv/libcurl static and link into fetch"   OFF)
+option(THIRDPARTY_STATIC  "Build libuv/libcurl static and link into yarts"   OFF)
 
 include(FetchContent)
 
@@ -42,7 +42,7 @@ else()
 endif()
 
 
-# ---------------- SQLite (headers-only; always fetched) ----------------
+# ---------------- SQLite (headers-only; always yartsed) ----------------
 # You can override: -D SQLITE_VERSION=3380000 -D SQLITE_YEAR=2022
 set(SQLITE_VERSION "3380000" CACHE STRING "sqlite src version")
 set(SQLITE_YEAR    "2022"    CACHE STRING "sqlite release year (url path)")
@@ -196,21 +196,21 @@ if(BUILD_FETCH)
     endif()
   endif()
 
-  # -------- Other deps (fetch-only) --------
+  # -------- Other deps (yarts-only) --------
   find_package(ZLIB REQUIRED)
   find_package(OpenSSL REQUIRED)
 
-  # -------- fetch target (shared) --------
-  add_library(fetch SHARED src/fetch.c)
-  set_target_properties(fetch PROPERTIES
+  # -------- yarts target (shared) --------
+  add_library(yarts SHARED src/yarts.c src/cookie.c)
+  set_target_properties(yarts PROPERTIES
     PREFIX ""
-    OUTPUT_NAME "libfetch${SUFFIX}"
+    OUTPUT_NAME "libyarts${SUFFIX}"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
   )
 
   # If third-party are shared (either system or FC-shared), prefer $ORIGIN so colocated .so's are found
   if(NOT WIN32 AND NOT THIRDPARTY_STATIC)
-    set_target_properties(fetch PROPERTIES
+    set_target_properties(yarts PROPERTIES
       BUILD_RPATH "\$ORIGIN"
       INSTALL_RPATH "\$ORIGIN"
     )
@@ -220,7 +220,7 @@ if(BUILD_FETCH)
     set(EXTRA_SYS_LIBS pthread dl rt)
   endif()
 
-  target_link_libraries(fetch PRIVATE
+  target_link_libraries(yarts PRIVATE
     uthash
     yyjson
     ${CURL_LINK_TARGET}    # system or FC (static/dynamic)
@@ -231,14 +231,14 @@ if(BUILD_FETCH)
   )
 
   if(THIRDPARTY_STATIC)
-    target_compile_definitions(fetch PRIVATE CURL_STATICLIB)
+    target_compile_definitions(yarts PRIVATE CURL_STATICLIB)
   endif()
 
   # Allow unresolved sqlite3* to bind at load time (host SQLite)
   if(APPLE)
-    target_link_options(fetch PRIVATE "-Wl,-undefined,dynamic_lookup")
+    target_link_options(yarts PRIVATE "-Wl,-undefined,dynamic_lookup")
   elseif(UNIX)
-    target_link_options(fetch PRIVATE "-Wl,--unresolved-symbols=ignore-in-shared-libs")
+    target_link_options(yarts PRIVATE "-Wl,--unresolved-symbols=ignore-in-shared-libs")
   elseif(WIN32)
     # Do not link sqlite3.lib; extension resolves at runtime.
   endif()

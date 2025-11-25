@@ -1,4 +1,5 @@
 // Copyright 2025 Nathanael Oh. All Rights Reserved.
+#include "cookie.h"
 #include <sqlite3ext.h>
 SQLITE_EXTENSION_INIT1
 
@@ -33,11 +34,12 @@ SQLITE_EXTENSION_INIT1
 
 /* For debug logs */
 #ifdef NDEBUG
-  #define FETCH_DBG(...) do { } while (0)
+  #define println(...) do { } while (0)
 #else
-  #define FETCH_DBG(...)                     \
+  #define println(...)                     \
     do {                                     \
       printf("fetch-dbg> " __VA_ARGS__);           \
+        printf("\n");\
     } while (0)
 #endif
 
@@ -52,7 +54,7 @@ SQLITE_EXTENSION_INIT1
  *     printf("%s\n", is_stripped ? "yup" : "nah");
  * @endcode
  */
-void normalize_column_name(char *str, size_t *len) {
+void normalize_column_name(char *str, int *len) {
     if (str[0] == '"') {
         *len -= 2;
         memmove(str, str + 1, *len);
@@ -161,6 +163,7 @@ static const char *fetch_status_text(int status) {
 }
 
 typedef struct {
+    bool is_hidden;
     char *name;
     size_t name_len;
     char *typename;
@@ -186,6 +189,13 @@ typedef struct {
      * Number of COLUMNS entries
      * */
     unsigned long columns_len;
+
+    int default_url_len;
+
+    /**
+     * A default url if one was set
+     */
+    char *default_url;
 
     /**
      * Resolved schema string. 
@@ -232,27 +242,32 @@ static bool is_key_body(char *key) {
  * Run a GET request to URL over tcp sockets using curl. Size of body
  * written out to BODY_SIZE.
  */
-static char *GET(const char *url, size_t *body_size) {
+static char *GET(const char *url, size_t *payload_size) {
     CURL *curl = curl_easy_init();
     if (!curl) {
         return NULL;
     }
 
-    char *buffer = NULL;
-    FILE *payload = open_memstream(&buffer, body_size);
     curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, payload);
+    char *buf = NULL;
+    FILE *stream = open_memstream(&buf, payload_size);
+    if (!stream) {
+        perror("open_memstream");
+        return NULL;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, stream);
     // default is GET so we don't need to set it
     // curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "GET");
     CURLcode rc = curl_easy_perform(curl);
-    fclose(payload);
     if (rc!= CURLE_OK) {
         fprintf(stderr, "curl_easy_perform(): %s\n",
                 curl_easy_strerror(rc)); 
         return NULL;
     }
+    fclose(stream);
     curl_easy_cleanup(curl);
-    return buffer;
+    return buf;
 }
 
 static int index_of_key(char *key) {
@@ -278,11 +293,21 @@ static yyjson_doc *array_wrap(yyjson_val *val) {
     return im_doc;
 }
 
-static Fetch *fetch_alloc(sqlite3 *db, int argc,
-                          const char *const *argv,
-                          size_t num_fetch_args,
-                          yyjson_doc *payload_doc,
-                          size_t payload_size)
+column_def **init_columns(int num_columns) {
+    column_def **columns = malloc(sizeof(column_def *) * num_columns);
+    column_def *url_column = malloc(sizeof(column_def));
+    url_column->is_hidden = true;
+    url_column->name = strdup("url");
+    url_column->name_len = 3;
+    url_column->typename = strdup("text");
+    url_column->typename_len = 4;
+    url_column->json_typename = 0;
+    columns[0] = url_column;
+    return columns;
+}
+
+static Fetch *use_state(sqlite3 *db, int argc,
+                          const char *const *argv)
 {
     Fetch *vtab = sqlite3_malloc(sizeof(Fetch));
     if (!vtab) {
@@ -291,122 +316,58 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     }
     memset(vtab, 0, sizeof(Fetch));
 
-    int num_columns = argc - (num_fetch_args + FETCH_ARGS_OFFSET);
+    int num_columns = (argc - FETCH_ARGS_OFFSET) + 1;
+    vtab->payload_len = 0;
+    vtab->payload = 0;
+    vtab->columns = init_columns(num_columns);
 
-    yyjson_val *root = yyjson_doc_get_root(payload_doc);
-    vtab->payload_len = yyjson_arr_size(root);
-    vtab->payload = payload_doc;
-    if (num_columns < 0) {
-        fprintf(stderr, "computed more fetch arguments than possible %d\n", FETCH_ARGS_OFFSET);
-        sqlite3_free(vtab);
-        return NULL;
-    }
-
-    vtab->columns = malloc(sizeof(column_def *) * num_columns);
-    if (num_columns == 0) {
-        if (yyjson_arr_size(root) == 0) {
-            fprintf(
-                stderr,
-                "dynamic schema needs at least 1 json element in the response body\n"
-            );
-            sqlite3_free(vtab);
-            return NULL;
+    int index = 1;
+    for (int i = FETCH_ARGS_OFFSET; i < argc; i++) {
+        const char *arg = argv[i];
+        enum {
+            COL_NAME = 0,
+            COL_TYPE,
+            COL_CST,
+            COL_CST_VAL
+        };
+        int tokens_size = 0;
+        int token_len[4];
+        char **token = split(arg, ' ', &tokens_size, token_len);
+        for (int i = 1; i < tokens_size; i++) {
+            char *prev = token[i];
+            token[i] = to_lower(prev, token_len[i]);
+            free(prev);
         }
-        // then we take the first object from the payload
-        // and use those keys as the columns
-        yyjson_val *head = yyjson_arr_get_first(root);
-        if (yyjson_get_type(head) != YYJSON_TYPE_OBJ) {
-            fprintf(
-                stderr,
-                "dynamic schema expected head type to be object but got %s\n",
-                yyjson_get_type_desc(head)
-            );
-            sqlite3_free(vtab);
-            return NULL;
+        if (
+            token_len[COL_NAME] == 3 &&
+            strncmp(token[COL_NAME], "url", 3) == 0
+            &&
+            token_len[COL_CST] == 7 && 
+            strncmp(token[COL_CST], "default", 7) == 0
+        ) {
+            vtab->default_url_len = token_len[COL_CST_VAL];
+            vtab->default_url = token[COL_CST_VAL];
         }
-        yyjson_val *key = 0, *value = 0;
-        int index = 0, max = 0;
-        yyjson_obj_foreach(head, index, max, key, value) {
-            const char *key_str = yyjson_get_str(key);
-            column_def *def = malloc(sizeof(column_def));
-            def->name = strdup(key_str);
-            def->name_len = strlen(key_str);
 
-            yyjson_type value_type = yyjson_get_type(value);
-            switch (value_type) {
-                case YYJSON_TYPE_STR: {
-                    def->typename = strdup("text");
-                    def->json_typename = strdup("string");
-                    break;
-                }
-                case YYJSON_TYPE_ARR: {
-                    def->typename = strdup("text");
-                    def->json_typename = strdup("array");
-                    break;
-                }
-                case YYJSON_TYPE_OBJ: {
-                    def->typename = strdup("text");
-                    def->json_typename = strdup("object");
-                    break;
-                }
-                case YYJSON_TYPE_NUM: {
-                    if (yyjson_is_sint(value) || yyjson_is_uint(value)) {
-                        def->typename = strdup("int");
-                        def->typename_len = 3;
-                    } else {
-                        def->typename = strdup("float");
-                        def->typename_len = 5;
-                    }
-                    def->json_typename = strdup("number");
-                    break;
-                }
-                case YYJSON_TYPE_BOOL: {
-                    def->typename = strdup("text");
-                    def->typename_len = 4;
-                    def->json_typename = strdup("boolean");
-                    break;
-                }
-                default:
-                    def->typename = strdup("text");
-                    def->typename_len = 4;
-                    def->json_typename = strdup("string");
-            }
+        normalize_column_name(token[COL_NAME], &token_len[COL_NAME]);
+        column_def *def = malloc(sizeof(column_def));
+        def->is_hidden = false;
+        def->name = token[COL_NAME];
+        def->name_len = token_len[COL_NAME];
+        def->typename = token[COL_TYPE];
+        def->typename_len = token_len[COL_TYPE];
 
-            vtab->columns[index] = def;
-        }
-        num_columns = index;
-    } else {
-        int index = 0;
-        for (int i = argc - num_fetch_args - 1; i < argc; i++) {
-            const char *arg = argv[i];
-
-            int tokens_size = 0;
-            int token_lens[2];
-            char **tokens = split(arg, ' ', &tokens_size, token_lens);
-
-            char *tok_col = tokens[0];
-            char *tok_col_type = tokens[1];
-            size_t tok_col_len = token_lens[0];
-            int tok_col_type_len = token_lens[1];
-
-            normalize_column_name(tok_col, &tok_col_len);
-
-            column_def *def = malloc(sizeof(column_def));
-            def->name = tok_col;
-            def->name_len = tok_col_len;
-            def->typename = to_lower(tok_col_type, tok_col_type_len);
-            def->typename_len = tok_col_len;
-
-            vtab->columns[index++] = def;
-        }
+        vtab->columns[index++] = def;
     }
     vtab->columns_len = num_columns;
 
     /* max number of tokens valid inside a single xCreate argument for the table declaration */
     int MAX_ARG_TOKENS = 2;
+    const char *table_name = argv[2];
+    char *first_line = string("CREATE TABLE %s(url hidden text,", table_name);
     sqlite3_str *s = sqlite3_str_new(db);
-    sqlite3_str_appendall(s, "CREATE TABLE x(");
-    for (int i = 0; i < num_columns; i++) {
+    sqlite3_str_appendall(s, first_line);
+    for (int i = 1; i < num_columns; i++) {
         column_def *def = vtab->columns[i];
         sqlite3_str_appendf(s, "%s %s", def->name, def->typename);
 
@@ -415,78 +376,9 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     }
     sqlite3_str_appendall(s, ")");
     vtab->schema = sqlite3_str_finish(s);
+    free(first_line);
+    println("schema: %s\n", vtab->schema);
     return vtab;
-}
-
-char **get_argument_labels(const char *const *argv, int argc) {
-    int MAX_NUM_FETCH_ARGS = 3;
-    char **fetch_args = calloc(MAX_NUM_FETCH_ARGS, sizeof(char *));
-    for (int i = FETCH_ARGS_OFFSET; i < argc; i++) {
-        const char *arg = argv[i];
-        const char *eq  = strchr(arg, '=');
-        if (!eq) {
-            continue;
-        }
-
-        const char *kbeg = arg, *kend = eq;
-        const char *vbeg = eq + 1, *vend = arg + strlen(arg);
-
-        trim_slice(&kbeg, &kend);
-        trim_slice(&vbeg, &vend);
-
-        char *key = trim(kbeg, kend);
-        char *value = trim(vbeg, vend);
-        
-        int key_int = index_of_key(key);
-        size_t value_len = strlen(value);
-        fetch_args[key_int] = remove_all(value, &value_len, '\'');
-
-        free(key);
-        free(value);
-    }
-    return fetch_args;
-}
-
-/**
- * Quick check if some argv from SQLite is a column declaration like "text INT", because
- * all column declarations need to have at least 1 whitespace.
- */
-static bool has_whitespace(const char *s) {
-    for (; *s; s++) {
-        if (isspace((unsigned char)*s))
-            return 1;
-    }
-    return 0;
-}
-
-char **get_fetch_args(const char *const *argv, int argc, size_t *fetch_args_count) {
-    // "fetch (module name)", "main (schema name)", "(table name)"
-    char **init = get_argument_labels(argv, argc);
-    if (!init[FETCH_URL]) {
-        int index = FETCH_ARGS_OFFSET + FETCH_URL;
-        // just let curl crash if url is invalid
-        const char *url_arg = argv[index];
-        size_t url_len = strlen(url_arg);
-        init[FETCH_URL] = remove_all(url_arg, &url_len, '\'');
-        *fetch_args_count += 1;
-    }
-    if (!init[FETCH_BODY]) {
-        int index = FETCH_ARGS_OFFSET + FETCH_BODY;
-        const char *body_arg = argc > index ? argv[index] : "$";
-        if (!has_whitespace(body_arg) && strncmp(body_arg, "$", 1) != 0) {
-            *fetch_args_count += 1;
-        }
-        size_t body_len = strlen(body_arg);
-        init[FETCH_BODY] = remove_all(body_arg, &body_len, '\'');
-    }
-    if (!init[FETCH_HEADERS]) {
-        int index = FETCH_ARGS_OFFSET + FETCH_HEADERS;
-        init[FETCH_HEADERS] = strdup(argc > index ? argv[index] : " ");
-        if (!has_whitespace(init[FETCH_HEADERS])) {
-            *fetch_args_count += 1;
-        }
-    }
-    return init;
 }
 
 /**
@@ -510,35 +402,7 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
         return SQLITE_ERROR;
     }
     int rc = SQLITE_OK;
-
-    size_t num_fetch_args = 0;
-    char **fetch_args = get_fetch_args(argv, argc, &num_fetch_args);
-
-    char *url = fetch_args[FETCH_URL];
-
-    size_t payload_size = 0;
-    char *payload = GET(url, &payload_size);
-    if (!payload || payload_size == 0) {
-        fprintf(stderr, "GET: fetch failed on url %s\n", url);
-        return SQLITE_ERROR;
-    }
-    yyjson_doc *doc = yyjson_read(payload, payload_size, 0);
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    if (!yyjson_is_arr(root) && !yyjson_is_obj(root)) {
-        const char *typename = yyjson_get_type_desc(root);
-        fprintf(stderr, "Expected PAYLOAD to be an array or an object, but got %s\n", typename);
-        return SQLITE_ERROR;
-    }
-    if (yyjson_is_obj(root)) {
-        // set doc to [ {...} ]
-        yyjson_doc *new = array_wrap(root);
-
-        yyjson_doc_free(doc);
-        doc = new;
-        root = yyjson_doc_get_root(doc);
-    }
-
-    *pp_vtab = (sqlite3_vtab *) fetch_alloc(pdb, argc, argv, num_fetch_args, doc, payload_size);
+    *pp_vtab = (sqlite3_vtab *) use_state(pdb, argc, argv);
     Fetch *vtab = (Fetch *) *pp_vtab;
     if (!vtab) { 
         return SQLITE_NOMEM;
@@ -611,8 +475,30 @@ static int x_best_index(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
     int argPos = 1;
     int planMask = 0;
     Fetch *vtab = (Fetch *)pVTab;
-    pIdxInfo->idxNum = planMask |= 0b01;
-    return 0;
+
+    if (vtab->default_url_len > 0 && vtab->default_url) {
+        println("Default url found, don't need to check index_info...");
+        return SQLITE_OK;
+    }
+
+    for (int i = 0; i < pIdxInfo->nConstraint; i++) {
+        struct sqlite3_index_constraint *cst = &pIdxInfo->aConstraint[i];
+
+        if (!cst->usable || cst->op != SQLITE_INDEX_CONSTRAINT_EQ)
+            continue;
+
+        struct sqlite3_index_constraint_usage *usage =
+            &pIdxInfo->aConstraintUsage[i];
+
+        if (is_url_set_index_constraint(cst)) {
+            usage->omit = 1;
+            usage->argvIndex = argPos++;
+            planMask |= 0b01;
+        }
+    }
+
+    pIdxInfo->idxNum = planMask;
+    return check_plan_mask(pIdxInfo, pVTab);
 }
 
 /**
@@ -684,10 +570,15 @@ static void json_bool_result(
 /** Populates the Fetch row */
 static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
                     int icol) {
+    println("xColumn start %d", icol);
     fetch_cursor_t *cursor = (fetch_cursor_t *)pcursor;
     Fetch *vtab = (Fetch *)pcursor->pVtab;
 
+    if (vtab->columns[icol]->is_hidden) {
+        return SQLITE_OK;
+    }
     char *column_name = vtab->columns[icol]->name;
+    printf("%s\n", column_name);
     yyjson_val *column = yyjson_obj_get(cursor->val, column_name);
     yyjson_type typename = yyjson_get_type(column);
     switch (typename) {
@@ -715,6 +606,7 @@ static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
         default:
             sqlite3_result_null(pctx);
     }
+    println("xColumn end");
     return SQLITE_OK;
 }
 
@@ -732,6 +624,35 @@ static int x_rowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
 
 static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
                     int argc, sqlite3_value **argv) {
+    Fetch *vtab = (void *) cur->pVtab;
+    if (argc + vtab->default_url_len == 0) {
+        cur->pVtab->zErrMsg = sqlite3_mprintf("yarts: incorrect usage of fetch, need at least 1 argument if no default url was set.\n");
+        return SQLITE_ERROR;
+    }
+    char *url = (vtab->default_url_len > 0 && vtab->default_url) ?
+        vtab->default_url : (char *) sqlite3_value_text(argv[FETCH_URL]);
+    size_t len = 0;
+    char *payload = GET(url, &len);
+    if (len < 1) {
+        println("no body from %s", url);
+        return SQLITE_ERROR;
+    }
+    yyjson_doc *doc = yyjson_read(payload, len, 0);
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (!yyjson_is_arr(root) && !yyjson_is_obj(root)) {
+        const char *typename = yyjson_get_type_desc(root);
+        fprintf(stderr, "Expected PAYLOAD to be an array or an object, but got %s\n", typename);
+        return SQLITE_ERROR;
+    }
+    if (yyjson_is_obj(root)) {
+        yyjson_doc *new = array_wrap(root);
+
+        yyjson_doc_free(doc);
+        doc = new;
+        root = yyjson_doc_get_root(doc);
+    }
+    vtab->payload_len = yyjson_arr_size(root);
+    vtab->payload = doc;
     return SQLITE_OK;
 };
 
@@ -778,7 +699,7 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
 //     return SQLITE_OK;
 // }
 
-static sqlite3_module sqlite_fetch = {
+static sqlite3_module fetch_vtab_module = {
     .iVersion=0,
     .xCreate=x_create,
     .xConnect=x_connect,
@@ -801,10 +722,10 @@ static sqlite3_module sqlite_fetch = {
 };
 
 // Runtime loadable entry
-int sqlite3_fetch_init(sqlite3 *db, char **pzErrMsg,
+int sqlite3_yarts_init(sqlite3 *db, char **pzErrMsg,
                        const sqlite3_api_routines *pApi) {
     SQLITE_EXTENSION_INIT2(pApi);
     // oh yeah baby
-    int rc = sqlite3_create_module(db, "fetch", &sqlite_fetch, 0);
+    int rc = sqlite3_create_module(db, "fetch", &fetch_vtab_module, 0);
     return rc;
 }

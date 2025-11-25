@@ -5,8 +5,8 @@ import type * as Preset from '@docusaurus/preset-classic';
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
 const config: Config = {
-  title: 'SQLite Fetch',
-  tagline: 'HTTP in SQLite',
+  title: 'yarts',
+  tagline: 'Yet Another Runtime TCP Stream',
   favicon: 'img/favicon.ico',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
@@ -15,7 +15,7 @@ const config: Config = {
   },
 
   // Set the production url of your site here
-  url: 'https://sqlite-fetch.dev',
+  url: 'https://yarts.dev',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
   baseUrl: '/',
@@ -43,7 +43,7 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
-          editUrl: 'https://github.com/bathan1/sqlite-fetch'
+          editUrl: 'https://github.com/bathan1/yarts'
         },
         blog: {
           showReadingTime: true,
@@ -53,7 +53,7 @@ const config: Config = {
           },
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
-          editUrl: 'https://github.com/bathan1/sqlite-fetch',
+          editUrl: 'https://github.com/bathan1/yarts',
           // Useful options to enforce blogging best practices
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
@@ -87,7 +87,7 @@ const config: Config = {
         },
         {to: '/blog', label: 'Blog', position: 'left'},
         {
-          href: "https://github.com/bathan1/sqlite-fetch",
+          href: "https://github.com/bathan1/yarts",
           label: 'GitHub',
           position: 'right',
         },

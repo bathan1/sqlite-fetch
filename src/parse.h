@@ -110,4 +110,36 @@ char **split(const char *str, char delim, int *out_count, int *lens) {
     return result;
 }
 
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+char *string(const char *fmt, ...) {
+    va_list ap;
+    va_list ap2;
+
+    // First pass: determine required size
+    va_start(ap, fmt);
+    va_copy(ap2, ap);
+
+    int needed = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+
+    if (needed < 0) {
+        va_end(ap2);
+        return NULL;
+    }
+
+    char *buf = malloc(needed + 1);
+    if (!buf) {
+        va_end(ap2);
+        return NULL;
+    }
+
+    // Second pass: actually write
+    vsnprintf(buf, needed + 1, fmt, ap2);
+    va_end(ap2);
+    return buf;
+}
+
 #endif
