@@ -211,8 +211,8 @@ sqlite> SELECT * FROM users LIMIT 2;
 └────┴───────────────┴──────────────────────────────┴────────────────────────────────────────────────────────────┘
 ```
 
-If you want to extract nested object values, you use a `GENERATED ALWAYS AS` column
-in conjunction with the `json_extract` SQLite operator against the nested column **key**:
+If you want to extract nested object values, use a `GENERATED ALWAYS AS` column
+in conjunction with the `json_extract` SQLite function like so:
 
 ```sql
 CREATE VIRTUAL TABLE users USING fetch (
@@ -220,16 +220,66 @@ CREATE VIRTUAL TABLE users USING fetch (
     id INT,
     name TEXT,
     -- highlight-start
-    address_street TEXT GENERATED ALWAYS AS (address -> 'street'),
-    address_suite TEXT GENERATED ALWAYS AS (address -> 'suite'),
-    address_city TEXT GENERATED ALWAYS AS (address -> 'city'),
-    address_zipcode TEXT GENERATED ALWAYS AS (address -> 'zipcode'),
-    address_geo_lat TEXT GENERATED ALWAYS AS (address -> 'geo' -> 'lat'),
-    address_geo_lng TEXT GENERATED ALWAYS AS (address -> 'geo' -> 'lng')
+    address_street TEXT GENERATED ALWAYS AS (address->'street'),
+    address_zipcode TEXT GENERATED ALWAYS AS (address->'zipcode'),
+    address_geo_lat TEXT GENERATED ALWAYS AS (address->'geo'->'lat'),
+    address_geo_lng TEXT GENERATED ALWAYS AS (address->'geo'->'lng')
     -- highlight-end
 );
 ```
 
 ```bash
 sqlite> SELECT * FROM users LIMIT 2;
+┌────┬───────────────┬────────────────┬─────────────────┬─────────────────┬─────────────────┐
+│ id │     name      │ address_street │ address_zipcode │ address_geo_lat │ address_geo_lng │
+├────┼───────────────┼────────────────┼─────────────────┼─────────────────┼─────────────────┤
+│ 1  │ Leanne Graham │ Kulas Light    │ 92998-3874      │ -37.3159        │ 81.1496         │
+│ 2  │ Ervin Howell  │ Victor Plains  │ 90566-7771      │ -43.9509        │ -34.4618        │
+└────┴───────────────┴────────────────┴─────────────────┴─────────────────┴─────────────────┘
+```
+
+If you have deeply nested values that are only separated by `object` parents,
+then the `GENERATED ALWAYS AS` extraction is the best way to read that directly.
+
+## Extract Nested Values
+The Fetch virtual table assumes the endpoint at `url` returns a JSON array of objects.
+If it returns a single object, then that object will be treated as the only row of the
+table.
+
+The FHIR API specs always return a single [Bundle](https://hl7.org/fhir/R4/bundle.html) object for 
+its resources. So attempting to make this `patients` table.
+
+```sql
+CREATE VIRTUAL TABLE patients USING fetch (
+    url TEXT DEFAULT 'https://r4.smarthealthit.org/Patient',
+    "resourceType" TEXT,
+    id TEXT
+);
+```
+
+Will result in this result set:
+
+```bash
+sqlite> SELECT * FROM patients;
+┌──────────────┬──────────────────────────────────────┐
+│ resourceType │                  id                  │
+├──────────────┼──────────────────────────────────────┤
+│ Bundle       │ 326c2224-482a-4aff-aa09-9fdabfcc601c │
+└──────────────┴──────────────────────────────────────┘
+```
+
+Of course, we'd like to be able to view the `Bundle.entry.resource` array field
+as the rows.
+
+We can do so by setting the `body` hidden column against `patients` to specify
+the JSON path we want to follow from the body using [JSONPath](https://en.wikipedia.org/wiki/JSONPath):
+
+```sql
+SELECT * FROM patients
+WHERE body = '$.entry[*].resource';
+```
+
+```bash
+sqlite> SELECT * FROM patients WHERE body = '$.entry[*].resource';
+TODO: PASTEME
 ```

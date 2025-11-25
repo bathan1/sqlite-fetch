@@ -42,6 +42,18 @@ SQLITE_EXTENSION_INIT1
     } while (0)
 #endif
 
+static void debug_print_json(const char *label, yyjson_val *val) {
+#ifndef NDEBUG
+    char *s = yyjson_val_write(val, 0, NULL);
+    if (s) {
+        println("%s: %s", label, s);
+        free(s);
+    } else {
+        println("%s: <null or non-serializable>", label);
+    }
+#endif
+}
+
 /**
  * Takes out double quoted column names.
  *
@@ -95,10 +107,18 @@ static const char *fetch_status_text(int status) {
 
 typedef struct {
     bool is_hidden;
-    char *name;
+
+    size_t generated_always_as_size;
+    size_t *generated_always_as_len;
+    char **generated_always_as;
+
     size_t name_len;
-    char *typename;
+    char *name;
+
     size_t typename_len;
+    char *typename;
+
+    size_t json_typename_len;
     char *json_typename;
 } column_def;
 
@@ -224,42 +244,116 @@ static yyjson_doc *array_wrap(yyjson_val *val) {
     return im_doc;
 }
 
+// id int [default] [default_val]
+// id int [generated] [always] [as] ([generated_val])
 enum {
+    // id
     COL_NAME = 0,
+    // int
     COL_TYPE,
+    // generated
     COL_CST,
-    COL_CST_VAL
+    // always
+    COL_CST_VAL,
+    // as
+    COL_CST_VAL2,
+    // ([generated_val])
+    COL_GEN_CST_VAL
 };
 
 column_def **init_columns(int argc, const char *const *argv) {
+
     bool has_url_column = false;
+
     for (int i = FETCH_ARGS_OFFSET; i < argc; i++) {
+        // argv[i] is one column definition
         const char *arg = argv[i];
         int tokens_size = 0;
-        int token_len[4];
-        char **token = split(arg, ' ', &tokens_size, token_len);
-        has_url_column = has_url_column || 
-            token_len[COL_NAME] == 3 && strncmp(token[COL_NAME], "url", 3) == 0;
+        int token_len[8];
+        char **tokens = split(arg, ' ', &tokens_size, token_len);
 
-        for (int i = 0; i < tokens_size; i++) {
-            free(token[i]);
+        if (tokens_size > 0 &&
+            token_len[COL_NAME] == 3 &&
+            strncmp(tokens[COL_NAME], "url", 3) == 0) {
+            has_url_column = true;
         }
-        free(token);
-    }
-    int num_columns = has_url_column ?
-        argc - FETCH_ARGS_OFFSET : 
-            argc - FETCH_ARGS_OFFSET + 1;
 
-    column_def **columns = malloc(sizeof(column_def *) * num_columns);
-    column_def *url_column = malloc(sizeof(column_def));
-    url_column->is_hidden = true;
-    url_column->name = strdup("url");
-    url_column->name_len = 3;
-    url_column->typename = strdup("text");
-    url_column->typename_len = 4;
-    url_column->json_typename = 0;
-    columns[0] = url_column;
+        for (int t = 0; t < tokens_size; t++) free(tokens[t]);
+        free(tokens);
+    }
+
+    int num_columns = (argc - FETCH_ARGS_OFFSET)
+                      + (!has_url_column ? 1 : 0);
+
+    column_def **columns = malloc(sizeof(column_def*) * num_columns);
+
+    // index 0 is always url
+    column_def *url = calloc(1, sizeof(column_def));
+    url->is_hidden = true;
+    url->name = strdup("url");
+    url->name_len = 3;
+    url->typename = strdup("text");
+    url->typename_len = 4;
+    columns[0] = url;
+
     return columns;
+}
+
+static void split_generated_path(
+    const char *expr,
+    size_t expr_len,
+    char ***out_parts,
+    size_t **out_lens,
+    size_t *out_count
+) {
+    // 1. Count segments
+    size_t count = 1;
+    for (size_t i = 0; i + 1 < expr_len; i++) {
+        if (expr[i] == '-' && expr[i+1] == '>') {
+            count++;
+        }
+    }
+
+    char **parts = malloc(sizeof(char*) * count);
+    size_t *lens = malloc(sizeof(size_t) * count);
+
+    size_t start = 0;
+    size_t idx = 0;
+
+    for (size_t i = 0; i <= expr_len; i++) {
+        bool at_arrow =
+            (i + 1 < expr_len && expr[i] == '-' && expr[i+1] == '>');
+        bool at_end = (i == expr_len);
+
+        if (at_arrow || at_end) {
+            size_t seg_len = i - start;
+
+            //
+            // First strip *quotes*
+            //
+            char *tmp = remove_all(expr + start, &seg_len, '\'');
+
+            //
+            // Then strip newlines and carriage returns
+            //
+            size_t cleaned_len = seg_len;
+            tmp = remove_all(tmp, &cleaned_len, '\n');
+            tmp = remove_all(tmp, &cleaned_len, '\r');
+
+            parts[idx] = tmp;
+            lens[idx] = cleaned_len;
+            idx++;
+
+            if (at_arrow) {
+                i++;
+                start = i + 1;
+            }
+        }
+    }
+
+    *out_parts = parts;
+    *out_lens = lens;
+    *out_count = count;
 }
 
 static Fetch *fetch_alloc(sqlite3 *db, int argc,
@@ -279,9 +373,9 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     for (int i = FETCH_ARGS_OFFSET; i < argc; i++) {
         const char *arg = argv[i];
         int tokens_size = 0;
-        int token_len[4];
+        int token_len[6] = {0};
         char **token = split(arg, ' ', &tokens_size, token_len);
-        for (int i = 1; i < tokens_size; i++) {
+        for (int i = 1; i < tokens_size - 1; i++) {
             char *prev = token[i];
             token[i] = to_lower(prev, token_len[i]);
             free(prev);
@@ -306,6 +400,41 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
         def->typename = token[COL_TYPE];
         def->typename_len = token_len[COL_TYPE];
 
+        if (
+            token_len[COL_CST] == 9 &&
+            strncmp(token[COL_CST], "generated", 9) == 0
+            &&
+            token_len[COL_CST_VAL] == 6 &&
+            strncmp(token[COL_CST_VAL], "always", 6) == 0
+            &&
+            token_len[COL_CST_VAL2] == 2 &&
+            strncmp(token[COL_CST_VAL2], "as", 2) == 0
+            &&
+            token_len[COL_GEN_CST_VAL] > 0
+        ) {
+            char *expr_raw = token[COL_GEN_CST_VAL];
+            size_t expr_len = token_len[COL_GEN_CST_VAL];
+            if (expr_len >= 2 && expr_raw[0] == '(' && expr_raw[expr_len - 1] == ')') {
+                expr_raw++;           // move start
+                expr_len -= 2;        // remove both '(' and ')'
+            }
+
+            /* make a real owned copy */
+            char *expr = malloc(expr_len + 1);
+            memcpy(expr, expr_raw, expr_len);
+            expr[expr_len] = '\0';
+
+            char **parts;
+            size_t *lens;
+            size_t count;
+
+            split_generated_path(expr, expr_len, &parts, &lens, &count);
+
+            def->generated_always_as = parts;
+            def->generated_always_as_len = lens;
+            def->generated_always_as_size = count;
+        }
+
         vtab->columns[index++] = def;
     }
     vtab->columns_len = index;
@@ -327,7 +456,7 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     vtab->schema = sqlite3_str_finish(s);
     free(first_line);
 
-    println("schema: %s\n", vtab->schema);
+    println("schema: %s", vtab->schema);
 
     return vtab;
 }
@@ -358,8 +487,6 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
     if (!vtab) { 
         return SQLITE_NOMEM;
     }
-
-
 
     rc += sqlite3_declare_vtab(pdb, vtab->schema);
     return rc;
@@ -497,7 +624,6 @@ static int x_close(sqlite3_vtab_cursor *cur) {
 }
 
 static int x_next(sqlite3_vtab_cursor *pcursor) {
-    println("xNext");
     Fetch *vtab = (Fetch *) pcursor->pVtab;
     fetch_cursor_t *cursor = (fetch_cursor_t *) pcursor;
     cursor->val = yyjson_arr_get(
@@ -518,52 +644,113 @@ static void json_bool_result(
     }
 }
 
+static yyjson_val *follow_generated_path(
+    yyjson_val *root,
+    char **keys,
+    size_t *lens,
+    size_t count
+) {
+    yyjson_val *cur = root;
+
+    for (size_t i = 0; i < count; i++) {
+        if (!cur || yyjson_get_type(cur) != YYJSON_TYPE_OBJ) {
+            return NULL;
+        }
+
+        // keys[i] is already null-terminated
+        cur = yyjson_obj_getn(cur, keys[i], lens[i]);
+    }
+
+    return cur;
+}
+
 /** Populates the Fetch row */
 static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
                     int icol) {
+
     fetch_cursor_t *cursor = (fetch_cursor_t *)pcursor;
-    println("xColumn, cursor->count=%d", cursor->count);
     Fetch *vtab = (Fetch *)pcursor->pVtab;
 
-    if (vtab->columns[icol]->is_hidden) {
+    column_def *def = vtab->columns[icol];
+
+    // Hidden column -> ignore
+    if (def->is_hidden) {
         return SQLITE_OK;
     }
-    char *column_name = vtab->columns[icol]->name;
-    yyjson_val *column = yyjson_obj_get(cursor->val, column_name);
-    yyjson_type typename = yyjson_get_type(column);
-    switch (typename) {
-        case YYJSON_TYPE_STR: {
-            sqlite3_result_text(pctx, yyjson_get_str(column), -1, SQLITE_TRANSIENT);
+
+    yyjson_val *val = NULL;
+
+    // 1. Handle `generated always as (...)` path
+    if (def->generated_always_as_size > 0) {
+        val = follow_generated_path(
+            cursor->val,
+            def->generated_always_as,
+            def->generated_always_as_len,
+            def->generated_always_as_size
+        );
+    } else {
+        // 2. Normal direct-access column
+        val = yyjson_obj_getn(
+            cursor->val,
+            def->name,
+            def->name_len
+        );
+    }
+
+    //
+    // 3. If no value found -> NULL
+    //
+    if (!val) {
+        sqlite3_result_null(pctx);
+        return SQLITE_OK;
+    }
+
+    //
+    // 4. Return the value depending on JSON type
+    //
+    yyjson_type type = yyjson_get_type(val);
+
+    switch (type) {
+        case YYJSON_TYPE_STR:
+            sqlite3_result_text(pctx, yyjson_get_str(val), -1, SQLITE_TRANSIENT);
             break;
-        }
+
         case YYJSON_TYPE_NUM:
-            sqlite3_result_int(pctx, yyjson_get_int(column));
+            sqlite3_result_int(pctx, yyjson_get_int(val));
             break;
+
         case YYJSON_TYPE_BOOL:
-            json_bool_result(pctx, vtab->columns[icol], column);
+            json_bool_result(pctx, def, val);
             break;
+
         case YYJSON_TYPE_ARR:
         case YYJSON_TYPE_OBJ: {
-            char *json = yyjson_val_write(column, -1, NULL);
-            if (!json) {
-                sqlite3_result_null(pctx);
-            } else {
+            char *json = yyjson_val_write(val, 0, NULL);
+            if (json) {
                 sqlite3_result_text(pctx, json, -1, SQLITE_TRANSIENT);
                 free(json);
+            } else {
+                sqlite3_result_null(pctx);
             }
             break;
         }
+
         default:
             sqlite3_result_null(pctx);
     }
+
     return SQLITE_OK;
 }
 
 static int x_eof(sqlite3_vtab_cursor *pcursor) {
     fetch_cursor_t *cursor = (fetch_cursor_t *) pcursor;
     Fetch *vtab = (Fetch *) pcursor->pVtab;
+    if (cursor->count > vtab->payload_len) {
+        println("xEof: cursor->count=%d > vtab->payload_len=%zu", cursor->count, vtab->payload_len);
+    }
     return cursor->count > vtab->payload_len;
 }
+
 
 /// API: `sqlite3_vtab.xRowid()`
 static int x_rowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
@@ -573,7 +760,6 @@ static int x_rowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
 
 static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
                     int argc, sqlite3_value **argv) {
-    println("xFilter");
     Fetch *vtab = (void *) cur->pVtab;
     if (argc + vtab->default_url_len == 0) {
         cur->pVtab->zErrMsg = sqlite3_mprintf("yarts: incorrect usage of fetch, need at least 1 argument if no default url was set.\n");
@@ -600,7 +786,6 @@ static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
     }
     if (yyjson_is_obj(root)) {
         yyjson_doc *new = array_wrap(root);
-
         yyjson_doc_free(doc);
         doc = new;
         root = yyjson_doc_get_root(doc);
