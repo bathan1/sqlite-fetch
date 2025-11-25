@@ -114,66 +114,7 @@ char **split(const char *str, char delim, int *out_count, int *lens) {
 #include <stdlib.h>
 
 
-#include "web.h"
 #include <curl/urlapi.h>
 
-char *mk_GET(struct url_s *url) {
-    if (!url) {
-        return null(EINVAL);
-    }
-    char *request = string(
-        "GET %s HTTP/1.1\r\n"
-        "Host: %s\r\n"
-        "Connection: close\r\n"
-        "\r\n",
-        url->pathname->bytes, url->host->bytes
-    );
-    if (!request) {
-        return null(ENOMEM);
-    }
-    return request;
-}
-
-struct url_s *parse_url(const char *url) {
-    struct url_s *map = url_alloc();
-    if (!map) {
-        return null(ENOMEM);
-    }
-
-    CURLU *u = curl_url();
-    curl_url_set(u, CURLUPART_URL, url, 0);
-
-    char *host = NULL;
-    curl_url_get(u, CURLUPART_HOST, &host, 0);
-    if (!host) {
-        curl_url_cleanup(u);
-        return null(EINVAL);
-    }
-
-    char *port = NULL;
-    curl_url_get(u, CURLUPART_PORT, &port, CURLU_DEFAULT_PORT);
-    if (!port) {
-        if (host) {
-            curl_free(host);
-        }
-        curl_url_cleanup(u);
-        return null(EINVAL);
-    }
-
-    char *pathname = NULL;
-    curl_url_get(u, CURLUPART_PATH, &pathname, 0);
-    if (!pathname) {
-        if (port) {curl_free(host);}
-        if (host) {curl_free(host);}
-        if (u) {curl_url_cleanup(u);}
-        return null(EINVAL);
-    }
-
-    curl_url_cleanup(u);
-    map->host = buffer_mv_string(host, 0);
-    map->port = buffer_mv_string(port, 0);
-    map->pathname = buffer_mv_string(pathname, 0);
-    return map;
-}
 
 #endif
