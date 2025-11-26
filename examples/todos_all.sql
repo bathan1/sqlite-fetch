@@ -6,13 +6,13 @@ CREATE VIRTUAL TABLE todos USING fetch (
         In typescript pseudocode, a todo looks like:
         `type Todo = { userId: number; id: number; title: string; completed: boolean; }`
     */
-    "userId" INT,
+    -- "userId" INT,
     id INT,
     title TEXT,
 
     -- This will be converted from JSON value (true / false) into 
-    -- text bytes bytes "true" or "false".
-    completed TEXT
+    -- text bytes "true" or "false".
+    -- completed TEXT
 );
 
-SELECT * FROM todos LIMIT 5;
+SELECT * FROM todos;
