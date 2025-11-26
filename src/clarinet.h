@@ -76,6 +76,8 @@ struct clarinet_state {
     yyjson_mut_doc *doc_root;
     // object node stack
     yyjson_mut_val *object[MAX_DEPTH];
+
+    unsigned int pp_flags;
 };
 typedef struct clarinet_state clarinet_state_t;
 
@@ -224,7 +226,7 @@ static int handle_end_map(void *ctx) {
         cur->keys_size = 0;
 
         // we push to queue
-        queue_push(&cur->queue, yyjson_write(final, NULL, NULL));
+        queue_push(&cur->queue, yyjson_write(final, cur->pp_flags, NULL));
 
         // free(cur->queue.handle);
         yyjson_doc_free(final);
