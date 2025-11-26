@@ -198,62 +198,6 @@ static bool is_key_body(char *key) {
 // "{?headers}", ... optional static column declarations
 #define MAX_FETCH_ARGC 6
 
-/**
- * Run a GET request to URL over tcp sockets using curl. Size of body
- * written out to BODY_SIZE.
- */
-static buffer *GET(const char *url) {
-    int fd = fetch(url);
-    if (fd < 0) {
-        perror("fetch");
-        return NULL;
-    }
-
-    size_t cap = 4096;
-    size_t len = 0;
-    char *out = malloc(cap);
-    if (!out) {
-        close(fd);
-        return NULL;
-    }
-
-    char buf[4096];
-    ssize_t n;
-
-    while ((n = recv(fd, buf, sizeof(buf), 0)) > 0) {
-        if (len + n + 1 > cap) {
-            size_t newcap = cap * 2;
-            while (newcap < len + n + 1)
-                newcap *= 2;
-
-            char *tmp = realloc(out, newcap);
-            if (!tmp) {
-                free(out);
-                close(fd);
-                return NULL;
-            }
-            out = tmp;
-            cap = newcap;
-        }
-
-        memcpy(out + len, buf, n);
-        len += n;
-    }
-
-    if (n < 0) {
-        perror("recv");
-        free(out);
-        close(fd);
-        return NULL;
-    }
-
-    out[len] = '\0';
-    close(fd);
-
-    buffer *encoded = append(&out, len);
-    return encoded;
-}
-
 static int index_of_key(char *key) {
     if (is_key_url(key)) {
         return 0;
@@ -506,7 +450,7 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
  * );
  * ```
  */
-static int x_connect(sqlite3 *pdb, void *paux, int argc,
+static int xConnect(sqlite3 *pdb, void *paux, int argc,
                      const char *const *argv, sqlite3_vtab **pp_vtab,
                      char **pz_err) {
     if (argc < MIN_ARGC) {
@@ -524,13 +468,13 @@ static int x_connect(sqlite3 *pdb, void *paux, int argc,
     return rc;
 }
 
-static int x_create(sqlite3 *pdb, void *paux, int argc,
+static int xCreate(sqlite3 *pdb, void *paux, int argc,
                      const char *const *argv, sqlite3_vtab **pp_vtab,
                      char **pz_err) {
     // same implementation as xConnect, we just 
     // have to point to different fns so this isn't eponymous (can't be called
     // as its own table e.g. SELECT * FROM fetch)
-    return x_connect(pdb, paux, argc, argv, pp_vtab, pz_err);
+    return xConnect(pdb, paux, argc, argv, pp_vtab, pz_err);
 }
 
 
@@ -584,7 +528,7 @@ static int check_plan_mask(struct sqlite3_index_info *index_info,
 /**
  * Fetch vtab's sqlite_module->xBestIndex() callback
  */
-static int x_best_index(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
+static int xBestIndex(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
     int argPos = 1;
     int planMask = 0;
     Fetch *vtab = (Fetch *)pVTab;
@@ -613,7 +557,7 @@ static int x_best_index(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
  * Cleanup virtual table state pointed to be P_VTAB.
  * Serves as both xDestroy and xDisconnect for the vtable.
  */
-static int x_disconnect(sqlite3_vtab *pvtab) {
+static int xDisconnect(sqlite3_vtab *pvtab) {
     Fetch *vtab = (Fetch *) pvtab;
     yyjson_doc_free(vtab->payload);
     for (int i = 0; i < vtab->columns_len; i++) {
@@ -633,7 +577,7 @@ static int x_disconnect(sqlite3_vtab *pvtab) {
 /**
  * Initialize fetch cursor at P_VTAB's cursor PP_CURSOR with count = 0.
  */
-static int x_open(sqlite3_vtab *pvtab, sqlite3_vtab_cursor **pp_cursor) {
+static int xOpen(sqlite3_vtab *pvtab, sqlite3_vtab_cursor **pp_cursor) {
     Fetch *fetch = (Fetch *) pvtab;
     fetch_cursor_t *cur = sqlite3_malloc(sizeof(fetch_cursor_t));
     if (!cur) {
@@ -648,14 +592,14 @@ static int x_open(sqlite3_vtab *pvtab, sqlite3_vtab_cursor **pp_cursor) {
     return SQLITE_OK;
 }
 
-static int x_close(sqlite3_vtab_cursor *cur) {
+static int xClose(sqlite3_vtab_cursor *cur) {
     fetch_cursor_t *cursor = (fetch_cursor_t *)cur;
     if (cursor)
         sqlite3_free(cursor);
     return SQLITE_OK;
 }
 
-static int x_next(sqlite3_vtab_cursor *cur0) {
+static int xNext(sqlite3_vtab_cursor *cur0) {
     fetch_cursor_t *cur = (fetch_cursor_t*)cur0;
     Fetch *vtab = (void *) cur->base.pVtab;
     println("xNext (%u -> %u) begin", cur->count, cur->count + 1);
@@ -687,7 +631,7 @@ static int x_next(sqlite3_vtab_cursor *cur0) {
             cur->eof = 1;
             break;
         }
-        println("drained %zu bytes in xNext", n);
+        println("recv %zu bytes in xNext", n);
 
         yajl_status s = yajl_parse(cur->clarinet_parser,
                                    (unsigned char*)buf, n);
@@ -816,7 +760,7 @@ static int x_column(sqlite3_vtab_cursor *pcursor,
 }
 
 
-static int x_eof(sqlite3_vtab_cursor *cur) {
+static int xEof(sqlite3_vtab_cursor *cur) {
     println("xEof begin");
     fetch_cursor_t *c = (fetch_cursor_t*)cur;
     int rc = c->eof && c->clarinet->queue.count == 0;
@@ -825,7 +769,7 @@ static int x_eof(sqlite3_vtab_cursor *cur) {
 }
 
 /// API: `sqlite3_vtab.xRowid()`
-static int x_rowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
+static int xRowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
     println("xRowid begin");
     *prowid = ((fetch_cursor_t *)pcursor)->count;
     println("xRowid end");
@@ -833,7 +777,7 @@ static int x_rowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
 }
 
 
-static int x_filter(sqlite3_vtab_cursor *cur0,
+static int xFilter(sqlite3_vtab_cursor *cur0,
                     int idxNum, const char *idxStr,
                     int argc, sqlite3_value **argv)
 {
@@ -912,18 +856,18 @@ static int x_filter(sqlite3_vtab_cursor *cur0,
 
 static sqlite3_module fetch_vtab_module = {
     .iVersion=0,
-    .xCreate=x_create,
-    .xConnect=x_connect,
-    .xBestIndex=x_best_index,
-    .xDisconnect=x_disconnect,
-    .xDestroy=x_disconnect,
-    .xOpen=x_open,
-    .xClose=x_close,
-    .xFilter=x_filter,
-    .xNext=x_next,
-    .xEof=x_eof,
+    .xCreate=xCreate,
+    .xConnect=xConnect,
+    .xBestIndex=xBestIndex,
+    .xDisconnect=xDisconnect,
+    .xDestroy=xDisconnect,
+    .xOpen=xOpen,
+    .xClose=xClose,
+    .xFilter=xFilter,
+    .xNext=xNext,
+    .xEof=xEof,
     .xColumn=x_column,
-    .xRowid=x_rowid,
+    .xRowid=xRowid,
     .xUpdate=NULL,
     .xBegin=NULL,
     .xSync=NULL,

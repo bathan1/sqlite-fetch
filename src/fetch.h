@@ -8,6 +8,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef enum {
+    STREAM_JSON_ARR,
+    STREAM_TEXT
+} fetch_stream_type_e;
+struct fetch_init {
+    char *headers;
+    char *body;
+    int stream_type;
+};
+typedef struct fetch_init fetch_init_t;
 /**
  * Connects to host at URL over tcp, then returns the socket fd
  * *after* sending the corresponding HTTP request encoded in URL.

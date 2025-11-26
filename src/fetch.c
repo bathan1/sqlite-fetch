@@ -104,15 +104,14 @@ int fetch(const char *url) {
         URL->pathname,
         host(URL)
     );
+    url_free(URL);
 
     if (!GET) {
         close(sockfd);
-        url_free(URL);
         return neg1(errno);
     }
     ssize_t sent = send(sockfd, GET, len(GET), 0);
     if (sent < 0) {
-        url_free(URL);
         return neg1(errno);
     }
     parse_headers_and_forward(sockfd, fetch_fd);
