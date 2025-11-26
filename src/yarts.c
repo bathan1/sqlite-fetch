@@ -432,6 +432,7 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
         def->name_len = token_len[COL_NAME];
         def->typename = token[COL_TYPE];
         def->typename_len = token_len[COL_TYPE];
+        def->generated_always_as_size = 0;
 
         if (
             token_len[COL_CST] == 9 &&
@@ -490,6 +491,12 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     free(first_line);
 
     println("schema: %s", vtab->schema);
+
+    for (int i = 0; i < vtab->columns_len; i++) {
+        printf("name: %s\n", vtab->columns[i]->name);
+        printf("is_hidden: %s\n", vtab->columns[i]->is_hidden ? "true" : "false");
+        printf("generated_path_size: %zu\n", vtab->columns[i]->generated_always_as_size);
+    }
 
     return vtab;
 }
@@ -769,6 +776,7 @@ static int x_column(sqlite3_vtab_cursor *pcursor,
     yyjson_val *val = yyjson_doc_get_root(cursor->next_doc);
 
     if (def->generated_always_as_size > 0) {
+        printf("%d here?\n", icol);
         val = follow_generated_path(
             val,
             def->generated_always_as,
@@ -821,7 +829,7 @@ static int x_eof(sqlite3_vtab_cursor *cur) {
     println("xEof begin");
     fetch_cursor_t *c = (fetch_cursor_t*)cur;
     int rc = c->eof && c->clarinet->queue.count == 0;
-    println("xEof end");
+    println("xEof end %s", rc == 1 ? "true" : "false");
     return rc;
 }
 
@@ -905,6 +913,8 @@ static int x_filter(sqlite3_vtab_cursor *cur0,
     char *popped = queue_pop(&Cur->clarinet->queue);
     yyjson_doc *doc = yyjson_read(popped, strlen(popped), 0);
     Cur->next_doc = doc;
+
+    debug_print_json("asdf", yyjson_doc_get_root(Cur->next_doc));
     println("xFilter end");
     return SQLITE_OK;
 }
