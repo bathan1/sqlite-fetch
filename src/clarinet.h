@@ -206,7 +206,6 @@ static int handle_map_key(void *ctx,
 static int handle_end_map(void *ctx) {
     clarinet_state_t *cur = ctx;
     if (cur->current_depth == 1) {
-        printf("r...\n");
         // closing root object because root object set depth to 1,
         // so that any nested object child can recursively push its own
         // node to the key / parent stack
@@ -229,7 +228,6 @@ static int handle_end_map(void *ctx) {
 
         // free(cur->queue.handle);
         yyjson_doc_free(final);
-        printf("out...\n");
     }
     cur->current_depth--;
     cur->depth = MAX(cur->current_depth, cur->depth);
@@ -261,12 +259,20 @@ static yajl_callbacks callbacks = {
     .yajl_end_array   = handle_end_array
 };
 
-static yajl_handle clarinet(clarinet_state_t *init) {
+static yajl_handle use_clarinet(clarinet_state_t *init) {
     queue_init(&init->queue);
     init->keys_cap = 1 << 8;
     init->keys = calloc(1 << 8, sizeof(char *));
     init->keys_size = 0;
     return yajl_alloc(&callbacks, NULL, (void *) init);
+}
+
+static void free_clarinet(clarinet_state_t *state) {
+    free(state->keys);
+    for (int i = 0; i < state->queue.count; i++) {
+        free(state->queue.handle[i]);
+    }
+    free(state->queue.handle);
 }
 
 #undef push

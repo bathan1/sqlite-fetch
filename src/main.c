@@ -2,7 +2,7 @@
 
 int main() {
     clarinet_state_t ctx = {0};
-    yajl_handle handle = clarinet(&ctx);
+    yajl_handle handle = use_clarinet(&ctx);
 
     unsigned char myJson[] = 
         "["
@@ -22,7 +22,11 @@ int main() {
     printf("%s\n", yajl_status_to_string(stat));
     yajl_free(handle);
 
-    printf("%zu objects in queue", ctx.queue.count);
+    printf("%zu objects in queue\n", ctx.queue.count);
+    for (int i = 0; i < ctx.queue.count; i++) {
+        printf("%s\n", ctx.queue.handle[i]);
+    }
 
+    free_clarinet(&ctx);
     return 0;
 }
