@@ -267,7 +267,7 @@ static yajl_handle use_clarinet(clarinet_state_t *init) {
     return yajl_alloc(&callbacks, NULL, (void *) init);
 }
 
-static void free_clarinet(clarinet_state_t *state) {
+static void clarinet_free(clarinet_state_t *state) {
     free(state->keys);
     for (int i = 0; i < state->queue.count; i++) {
         free(state->queue.handle[i]);

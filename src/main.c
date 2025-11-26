@@ -4,7 +4,7 @@ int main() {
     clarinet_state_t ctx = {0};
     yajl_handle handle = use_clarinet(&ctx);
 
-    unsigned char myJson[] = 
+    unsigned char chunk1[] = 
         "["
             "{\"hello\": \"world\","
             "\"int\": 3,"
@@ -12,13 +12,16 @@ int main() {
             "\"object\": {\"depth\": 1}"
             "},"
             "{\"foo\": \"bar\","
-            "\"int\": 3,"
+            "\"int\":";
+    unsigned char chunk2[] = "3,"
             "\"float\": 1.5,"
             "\"object\": {\"depth\": 1}"
             "}"
         "]"
     ;
-    yajl_status stat = yajl_parse(handle, myJson, sizeof(myJson) - 1);
+    yajl_status stat = yajl_parse(handle, chunk1, sizeof(chunk1) - 1);
+    printf("%s\n", yajl_status_to_string(stat));
+    stat = yajl_parse(handle, chunk2, sizeof(chunk2) - 1);
     printf("%s\n", yajl_status_to_string(stat));
     yajl_free(handle);
 
@@ -27,6 +30,6 @@ int main() {
         printf("%s\n", ctx.queue.handle[i]);
     }
 
-    free_clarinet(&ctx);
+    clarinet_free(&ctx);
     return 0;
 }

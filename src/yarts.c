@@ -165,6 +165,8 @@ typedef struct {
     size_t payload_len;
 } Fetch;
 
+#include "clarinet.h"
+
 /// Cursor
 typedef struct fetch_cursor {
     sqlite3_vtab_cursor base;
@@ -178,11 +180,6 @@ typedef struct fetch_cursor {
     int sockfd;
     int eof;
 
-    yajl_handle yajl_handle;
-
-    // Temporary builder state for current JSON object
-    yyjson_mut_doc *builder;
-
     // Completed row (a fully constructed immutable doc)
     yyjson_doc *next_doc;
 
@@ -192,8 +189,6 @@ typedef struct fetch_cursor {
     yyjson_mut_val *obj_stack[64];
     char *key_stack[64];
 } fetch_cursor_t;
-static void queue_push(fetch_cursor_t *cur, yyjson_doc *doc);
-static yyjson_doc *queue_pop(fetch_cursor_t *cur);
 
 #define X_UPDATE_OFFSET 2
 
@@ -765,45 +760,6 @@ static yyjson_val *follow_generated_path(
     return cur;
 }
 
-static int ensure_next_doc(fetch_cursor_t *cur) {
-    if (cur->next_doc)
-        return SQLITE_OK;
-
-    // First try queue
-    yyjson_doc *doc = queue_pop(cur);
-    if (doc) {
-        cur->next_doc = doc;
-        return SQLITE_OK;
-    }
-
-    // If no queue data but not EOF: read more from socket
-    char buf[4096];
-    ssize_t n;
-
-    while (!cur->next_doc &&
-           (n = recv(cur->sockfd, buf, sizeof(buf), 0)) > 0)
-    {
-        yajl_status stat =
-            yajl_parse(cur->yajl_handle, (unsigned char*)buf, n);
-
-        if (stat == yajl_status_error) {
-            cur->eof = 1;
-            return SQLITE_ERROR;
-        }
-
-        // callbacks will fill queue
-        doc = queue_pop(cur);
-        if (doc) {
-            cur->next_doc = doc;
-            return SQLITE_OK;
-        }
-    }
-
-    // If we reach EOF and still no doc
-    cur->eof = 1;
-    return SQLITE_OK;
-}
-
 /** Populates the Fetch row */
 static int x_column(sqlite3_vtab_cursor *pcursor,
                     sqlite3_context *pctx,
@@ -890,31 +846,6 @@ static int x_rowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
     *prowid = ((fetch_cursor_t *)pcursor)->count;
     println("xRowid end");
     return SQLITE_OK;
-}
-
-static void queue_push(fetch_cursor_t *cur, yyjson_doc *doc) {
-    if (cur->queue_count == cur->queue_cap) {
-        size_t newcap = cur->queue_cap * 2;
-        yyjson_doc **newbuf = realloc(cur->queue, newcap * sizeof(yyjson_doc*));
-        if (!newbuf) return; // OOM, but safer to drop
-        cur->queue = newbuf;
-        cur->queue_cap = newcap;
-    }
-
-    cur->queue[cur->queue_tail] = doc;
-    cur->queue_tail = (cur->queue_tail + 1) % cur->queue_cap;
-    cur->queue_count++;
-}
-
-static yyjson_doc *queue_pop(fetch_cursor_t *cur) {
-    if (cur->queue_count == 0)
-        return NULL;
-
-    yyjson_doc *doc = cur->queue[cur->queue_head];
-    cur->queue_head = (cur->queue_head + 1) % cur->queue_cap;
-    cur->queue_count--;
-
-    return doc;
 }
 
 
