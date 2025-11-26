@@ -17,10 +17,8 @@ int main() {
     while (clr->queue->count > 0) {
         char *pop = queue_pop(clr->queue);
         free(pop);
-        // printf("%s\n", pop);
     }
     queue_free(clr->queue);
-    free(clr->keys);
     free(clr);
 
     return 0;
