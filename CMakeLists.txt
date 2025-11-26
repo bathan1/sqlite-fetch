@@ -85,6 +85,20 @@ if(NOT yyjson_POPULATED)
   add_subdirectory(${yyjson_SOURCE_DIR} ${yyjson_BINARY_DIR} EXCLUDE_FROM_ALL)
 endif()
 
+# ---------------- YAJL (streaming JSON parser) ----------------
+FetchContent_Declare(
+    yajl
+    GIT_REPOSITORY https://github.com/lloyd/yajl.git
+    GIT_TAG master
+)
+
+FetchContent_GetProperties(yajl)
+if(NOT yajl_POPULATED)
+  FetchContent_Populate(yajl)
+  # YAJL uses its own CMakeLists; we turn it into a normal subproject
+  add_subdirectory(${yajl_SOURCE_DIR} ${yajl_BINARY_DIR} EXCLUDE_FROM_ALL)
+endif()
+
 # Interface target providing sqlite3.h/sqlite3ext.h
 add_library(sqlite-headers INTERFACE)
 target_include_directories(sqlite-headers INTERFACE "${SQLITE_TREE}")
@@ -223,6 +237,7 @@ if(BUILD_FETCH)
   target_link_libraries(yarts PRIVATE
     uthash
     yyjson
+    yajl
     ${CURL_LINK_TARGET}    # system or FC (static/dynamic)
     OpenSSL::SSL OpenSSL::Crypto
     ZLIB::ZLIB

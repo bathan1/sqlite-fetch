@@ -3,7 +3,7 @@
 #include <unistd.h>
 SQLITE_EXTENSION_INIT1
 
-#define NDEBUG
+// #define NDEBUG
 #include <assert.h>
 
 #include <yyjson.h>
@@ -15,6 +15,7 @@ SQLITE_EXTENSION_INIT1
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include <yajl/yajl_parse.h>
 
 /* utils */
 #include "fetch.h"
@@ -166,11 +167,29 @@ typedef struct {
 } Fetch;
 
 /// Cursor
-typedef struct {
+typedef struct fetch_cursor {
     sqlite3_vtab_cursor base;
-    int count;
-    yyjson_val *val;
+
+    int sockfd;
+    int eof;
+
+    yajl_handle yajl_handle;
+
+    // Temporary builder state for current JSON object
+    yyjson_mut_doc *builder;
+    yyjson_mut_val *current_obj;
+    char *current_key;
+
+    // Completed row (a fully constructed immutable doc)
+    yyjson_doc *next_doc;
+
+    size_t count;
+    size_t json_count;
+    size_t depth;
+    yyjson_mut_val *obj_stack[64];
 } fetch_cursor_t;
+
+
 
 #define X_UPDATE_OFFSET 2
 
@@ -635,7 +654,6 @@ static int x_open(sqlite3_vtab *pvtab, sqlite3_vtab_cursor **pp_cursor) {
     memset(cur, 0, sizeof(fetch_cursor_t));
 
     cur->count = 0;
-    cur->val = 0;
     *pp_cursor = (sqlite3_vtab_cursor *)cur;
     (*pp_cursor)->pVtab = pvtab;
     return SQLITE_OK;
@@ -649,11 +667,35 @@ static int x_close(sqlite3_vtab_cursor *cur) {
 }
 
 static int x_next(sqlite3_vtab_cursor *pcursor) {
-    Fetch *vtab = (Fetch *) pcursor->pVtab;
-    fetch_cursor_t *cursor = (fetch_cursor_t *) pcursor;
-    cursor->val = yyjson_arr_get(
-        yyjson_doc_get_root(vtab->payload), cursor->count);
-    cursor->count++;
+    fetch_cursor_t *cur = (fetch_cursor_t*)pcursor;
+
+    // If we already have next object ready, return it
+    if (cur->next_doc) {
+        return SQLITE_OK;
+    }
+
+    // Otherwise: read from socket until YAJL delivers a JSON object
+    char buf[4096];
+    ssize_t n;
+
+    while ((n = recv(cur->sockfd, buf, sizeof(buf), 0)) > 0) {
+        yajl_status stat = yajl_parse(cur->yajl_handle, (unsigned char*)buf, n);
+
+        if (stat == yajl_status_error) {
+            fprintf(stderr, "YAJL parse error\n");
+            cur->eof = 1;
+            return SQLITE_ERROR;
+        }
+
+        // If callbacks created next_doc, break out
+        if (cur->next_doc) {
+            return SQLITE_OK;
+        }
+    }
+
+    // recv() <= 0 -> no more data
+    cur->eof = 1;
+
     return SQLITE_OK;
 }
 
@@ -703,12 +745,12 @@ static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
         return SQLITE_OK;
     }
 
-    yyjson_val *val = NULL;
+    yyjson_val *val = yyjson_doc_get_root(cursor->next_doc);
 
     // 1. Handle `generated always as (...)` path
     if (def->generated_always_as_size > 0) {
         val = follow_generated_path(
-            cursor->val,
+            val,
             def->generated_always_as,
             def->generated_always_as_len,
             def->generated_always_as_size
@@ -716,7 +758,7 @@ static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
     } else {
         // 2. Normal direct-access column
         val = yyjson_obj_getn(
-            cursor->val,
+            val,
             def->name,
             def->name_len
         );
@@ -767,13 +809,9 @@ static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
     return SQLITE_OK;
 }
 
-static int x_eof(sqlite3_vtab_cursor *pcursor) {
-    fetch_cursor_t *cursor = (fetch_cursor_t *) pcursor;
-    Fetch *vtab = (Fetch *) pcursor->pVtab;
-    if (cursor->count > vtab->payload_len) {
-        println("xEof: cursor->count=%d > vtab->payload_len=%zu", cursor->count, vtab->payload_len);
-    }
-    return cursor->count > vtab->payload_len;
+static int x_eof(sqlite3_vtab_cursor *cur) {
+    fetch_cursor_t *c = (fetch_cursor_t*)cur;
+    return c->eof && c->next_doc == NULL;
 }
 
 
@@ -783,45 +821,252 @@ static int x_rowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
     return SQLITE_OK;
 }
 
-static int x_filter(sqlite3_vtab_cursor *cur, int index, const char *index_str,
-                    int argc, sqlite3_value **argv) {
-    Fetch *vtab = (void *) cur->pVtab;
-    if (argc + vtab->default_url_len == 0) {
-        cur->pVtab->zErrMsg = sqlite3_mprintf("yarts: incorrect usage of fetch, need at least 1 argument if no default url was set.\n");
-        return SQLITE_ERROR;
-    }
-    char *argurl = argc > 0 ? (char *) sqlite3_value_text(argv[FETCH_URL]) : vtab->default_url;
-    size_t size = argc > 0 ? strlen(argurl) : vtab->default_url_len;
-    char *url = argc > 0 ? 
-        remove_all(
-            sqlite3_value_text(argv[FETCH_URL]), &size, '\'') 
-        : strdup(vtab->default_url);
+static int handle_null(void *ctx) {
+    println("YAJL: null");
+    return 1;
+}
 
-    buffer *payload = GET(url);
-    if (len(payload) < 1) {
-        println("no body from %s", url);
-        return SQLITE_ERROR;
+static int handle_bool(void *ctx, int b) {
+    println("YAJL: boolean=%d", b);
+    return 1;
+}
+
+static int handle_int(void *ctx, long long i) {
+    println("YAJL: integer=%lld", i);
+    return 1;
+}
+
+static int handle_double(void *ctx, double d) {
+    println("YAJL: double=%f", d);
+    return 1;
+}
+
+static int handle_number(void *ctx, const char *num, size_t len) {
+    fetch_cursor_t *cur = ctx;
+
+    println("YAJL: number=%.*s", (int)len, num);
+    char *key = cur->current_key;
+
+    if (cur->depth == 0) {
+        println("YAJL: number ignored (not inside an object)");
+        return 1;
     }
-    yyjson_doc *doc = yyjson_read(payload, len(payload), 0);
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    if (!yyjson_is_arr(root) && !yyjson_is_obj(root)) {
-        const char *typename = yyjson_get_type_desc(root);
-        fprintf(stderr, "Expected PAYLOAD to be an array or an object, but got %s\n", typename);
-        return SQLITE_ERROR;
+
+    yyjson_mut_val *obj = cur->obj_stack[cur->depth - 1];
+
+    if (!obj || !key) {
+        println("YAJL: number ignored (missing obj or key)");
+        return 1;
     }
-    if (yyjson_is_obj(root)) {
-        yyjson_doc *new = array_wrap(root);
-        yyjson_doc_free(doc);
-        doc = new;
-        root = yyjson_doc_get_root(doc);
+
+    /* Convert number safely:
+       YAJL gives numeric tokens as strings. We must parse them. */
+    bool is_float = false;
+    for (size_t i = 0; i < len; i++) {
+        char c = num[i];
+        if (c == '.' || c == 'e' || c == 'E') {
+            is_float = true;
+            break;
+        }
     }
-    vtab->payload_len = yyjson_arr_size(root);
-    vtab->payload = doc;
-    fetch_cursor_t *Cur = (void *) cur;
-    Cur->val = yyjson_arr_get_first(root);
-    Cur->count = 1;
-    return SQLITE_OK;
+
+    yyjson_mut_val *val;
+
+    if (is_float) {
+        double d = strtod(num, NULL);
+        val = yyjson_mut_real(cur->builder, d);
+    } else {
+        long long i = strtoll(num, NULL, 10);
+        val = yyjson_mut_sint(cur->builder, i);
+    }
+
+    /* Insert into current object */
+    yyjson_mut_obj_add_val(cur->builder, obj, key, val);
+
+    /* key is consumed */
+    cur->current_key = NULL;
+
+    return 1;
+}
+
+static int handle_string(void *ctx,
+                         const unsigned char *str, size_t len) {
+    fetch_cursor_t *cur = ctx;
+    println("YAJL: string=%.*s", (int)len, str);
+
+    if (!cur->current_key) return 1;
+
+    yyjson_mut_val *val =
+        yyjson_mut_strn(cur->builder, (const char*)str, len);
+
+    yyjson_mut_obj_add_val(cur->builder,
+                           cur->obj_stack[cur->depth - 1],
+                           cur->current_key,
+                           val);
+
+    cur->current_key = NULL;
+
+    return 1;
+}
+
+static int handle_start_map(void *ctx) {
+    println("YAJL: start map");
+    fetch_cursor_t *cur = ctx;
+
+    yyjson_mut_val *new_obj;
+
+    // Create a new builder if this is the first (top-level) map
+    if (cur->depth == 0) {
+        cur->builder = yyjson_mut_doc_new(NULL);
+        new_obj = yyjson_mut_obj(cur->builder);
+        yyjson_mut_doc_set_root(cur->builder, new_obj);
+        println("YAJL: new root object");
+    } else {
+        // nested map value
+        new_obj = yyjson_mut_obj(cur->builder);
+
+        // attach as value to parent object
+        if (cur->current_key) {
+            yyjson_mut_obj_add_val(cur->builder,
+                                   cur->obj_stack[cur->depth - 1],
+                                   cur->current_key,
+                                   new_obj);
+            cur->current_key = NULL;
+        }
+    }
+
+    cur->obj_stack[cur->depth] = new_obj;
+    cur->depth++;
+
+    return 1;
+}
+
+static int handle_map_key(void *ctx,
+                       const unsigned char *str,
+                       size_t len) {
+    fetch_cursor_t *cur = ctx;
+    println("YAJL: map_key=%.*s", (int)len, str);
+    cur->current_key = string("%.*s", (int) len, str);
+    return 1;
+}
+
+static int handle_end_map(void *ctx) {
+    fetch_cursor_t *cur = ctx;
+
+    println("YAJL: end map depth=%zu", cur->depth);
+
+    cur->depth--;
+
+    if (cur->depth == 0) {
+        // Completed top-level JSON object
+        yyjson_doc *final = yyjson_mut_doc_imut_copy(cur->builder, NULL);
+
+        cur->next_doc = final;
+
+        // debug print
+        char *dump = yyjson_write(final, YYJSON_WRITE_PRETTY_TWO_SPACES, NULL);
+        println("COMPLETE JSON OBJ:\n%s", dump);
+        free(dump);
+    }
+
+    return 1;
+}
+
+static int handle_start_array(void *ctx) {
+    println("YAJL: start array");
+    return 1;
+}
+
+static int handle_end_array(void *ctx) {
+    println("YAJL: end array");
+    return 1;
+}
+
+static yajl_callbacks fetch_callbacks = {
+    .yajl_null        = handle_null,
+    .yajl_boolean     = handle_bool,
+    .yajl_integer     = handle_int,
+    .yajl_double      = handle_double,
+    .yajl_number      = handle_number,
+    .yajl_string      = handle_string,
+
+    .yajl_start_map   = handle_start_map,
+    .yajl_map_key     = handle_map_key,
+    .yajl_end_map     = handle_end_map,
+
+    .yajl_start_array = handle_start_array,
+    .yajl_end_array   = handle_end_array
 };
+
+static int x_filter(sqlite3_vtab_cursor *cur0,
+                    int idxNum, const char *idxStr,
+                    int argc, sqlite3_value **argv)
+{
+    Fetch *vtab = (Fetch*)cur0->pVtab;
+    fetch_cursor_t *Cur = (fetch_cursor_t*)cur0;
+
+    Cur->depth = 0;
+    Cur->eof       = 0;
+    Cur->count     = 0;
+    Cur->json_count = 0;
+    Cur->next_doc  = NULL;
+
+    // Extract URL
+    if (argc + vtab->default_url_len == 0) {
+        cur0->pVtab->zErrMsg =
+            sqlite3_mprintf("fetch: need at least 1 argument or default url");
+        return SQLITE_ERROR;
+    }
+
+    const char *argurl = (argc > 0)
+        ? (const char*)sqlite3_value_text(argv[0])
+        : vtab->default_url;
+
+    size_t sz = strlen(argurl);
+    char *url = remove_all(argurl, &sz, '\'');
+    if (!url) url = strdup(vtab->default_url);
+
+    Cur->sockfd = fetch(url);
+    free(url);
+
+    if (Cur->sockfd < 0) {
+        cur0->pVtab->zErrMsg =
+            sqlite3_mprintf("fetch: could not connect");
+        Cur->eof = 1;
+        return SQLITE_ERROR;
+    }
+
+    Cur->yajl_handle =
+        yajl_alloc(&fetch_callbacks, NULL, (void*)Cur);
+
+    if (!Cur->yajl_handle) {
+        Cur->eof = 1;
+        return SQLITE_NOMEM;
+    }
+
+    char buf[4096];
+    ssize_t n;
+
+    while (!Cur->next_doc &&
+           (n = recv(Cur->sockfd, buf, sizeof(buf), 0)) > 0)
+    {
+        yajl_status stat =
+            yajl_parse(Cur->yajl_handle,
+                       (unsigned char*)buf, n);
+
+        if (stat == yajl_status_error) {
+            Cur->eof = 1;
+            return SQLITE_ERROR;
+        }
+    }
+
+    if (!Cur->next_doc) {
+        println("unable to get initial object head, setting eof");
+        Cur->eof = 1;
+    }
+
+    return SQLITE_OK;
+}
 
 /**
  * Handles every other query that isn't a `SELECT` query.
