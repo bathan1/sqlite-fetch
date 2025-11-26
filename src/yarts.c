@@ -119,8 +119,6 @@ typedef struct {
     size_t typename_len;
     char *typename;
 
-    size_t json_typename_len;
-    char *json_typename;
 } column_def;
 
 /**
@@ -153,16 +151,6 @@ typedef struct {
      * Resolved schema string. 
      */
     char *schema;
-
-    /**
-     * Parent json pointer.
-     */
-    yyjson_doc *payload;
-
-    /**
-     * How big is PAYLOAD
-     */
-    size_t payload_len;
 } Fetch;
 
 #include "clarinet.h"
@@ -342,8 +330,6 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
         return NULL;
     }
     memset(vtab, 0, sizeof(Fetch));
-    vtab->payload_len = 0;
-    vtab->payload = 0;
     vtab->columns = init_columns(argc, argv);
 
     int index = 1;
@@ -558,21 +544,33 @@ static int xBestIndex(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
  * Serves as both xDestroy and xDisconnect for the vtable.
  */
 static int xDisconnect(sqlite3_vtab *pvtab) {
-    println("xDisconnect begin");
     Fetch *vtab = (Fetch *) pvtab;
-    yyjson_doc_free(vtab->payload);
     for (int i = 0; i < vtab->columns_len; i++) {
         if (vtab->columns[i]) {
             if (vtab->columns[i]->name) {
                 free(vtab->columns[i]->name);
+                vtab->columns[i]->name = 0;
             }
+            if (vtab->columns[i]->typename) {
+                free(vtab->columns[i]->typename);
+                vtab->columns[i]->typename = 0;
+            }
+            free(vtab->columns[i]);
+            vtab->columns[i] = 0;
         }
     }
     free(vtab->columns);
+    vtab->columns = 0;
+    vtab->columns_len = 0;
+
+    if (vtab->default_url_len > 0 && vtab->default_url) {
+        free(vtab->default_url);
+        vtab->default_url_len = 0;
+        vtab->default_url = 0;
+    }
 
     sqlite3_free(vtab->schema);
     sqlite3_free(pvtab);
-    println("xDisconnect end");
     return SQLITE_OK;
 }
 
@@ -598,8 +596,14 @@ static int xClose(sqlite3_vtab_cursor *cur) {
     println("xClose begin");
     fetch_cursor_t *cursor = (fetch_cursor_t *)cur;
     if (cursor) {
-        clarinet_free(cursor->clr);
-        sqlite3_free(cursor);
+        if (cursor->next_doc) {
+            yyjson_doc_free(cursor->next_doc);
+        }
+        if (cursor->clr->count > 0) {
+            clarinet_free(cursor->clr);
+            fclose(cursor->clr->writable);
+        }
+        sqlite3_free(cur);
     }
     println("xClose end");
     return SQLITE_OK;
