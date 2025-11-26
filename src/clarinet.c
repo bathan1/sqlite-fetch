@@ -4,7 +4,7 @@
 #define peek(cur, field) (cur->field[cur->current_depth - 1])
 #define push(cur, field, value) ((cur->field[cur->current_depth]) = value)
 
-static void clarinet_queue_init(struct clarinet *q) {
+static void queue_init(struct clarinet *q) {
     q->cap = 8;
     q->handle = calloc(q->cap, sizeof(char *));
     q->head = q->tail = q->count = 0;
@@ -350,7 +350,7 @@ char *clarinet_pop(struct clarinet *q) {
 
 struct clarinet *use_clarinet() {
     clarinet_state_t *init = calloc(1, sizeof(struct clarinet_state));
-    clarinet_queue_init(&init->queue);
+    queue_init(&init->queue);
     if (!&(init->queue)) {
         perror("queue_init");
         free(init);
