@@ -211,25 +211,44 @@ static yajl_callbacks callbacks = {
     .yajl_end_array   = handle_end_array
 };
 
-yajl_handle use_clarinet(struct clarinet_state *init) {
+struct clarinet *use_clarinet() {
+    clarinet_state_t *init = calloc(1, sizeof(struct clarinet_state));
     queue_init(&init->queue);
     init->keys_cap = 1 << 8;
     init->keys = calloc(1 << 8, sizeof(char *));
     init->keys_size = 0;
-    return yajl_alloc(&callbacks, NULL, (void *) init);
+    yajl_handle handle = yajl_alloc(&callbacks, NULL, (void *) init);
+    if (!handle) {
+        queue_free(&init->queue);
+        free(init->keys);
+        free(init);
+        return NULL;
+    }
+
+    struct clarinet *api = calloc(1, sizeof(struct clarinet));
+    api->writable = (long) handle;
+    api->state = init;
+    return api;
 }
 
-void clarinet_free(clarinet_state_t *state) {
-    if (!state) {
+void clarinet_free(struct clarinet *clr) {
+    if (!clr) {
         return;
     }
-    if (state->keys) {
+    if (!clr->state || !clr->writable) {
+        if (clr->state) free(clr->state);
+        if (clr->writable) yajl_free((yajl_handle) clr->writable);
+    }
+    if (clr->state->keys) {
         // we free the key buffers but keep the parent poitner until the end
-        free(state->keys);
+        free(clr->state->keys);
     }
-    if (state->queue.handle) {
-        queue_free(&state->queue);
+    if (clr->state->queue.handle) {
+        queue_free(&clr->state->queue);
     }
+    yajl_free((yajl_handle) clr->writable);
+    free(clr->state);
+    free(clr);
 }
 
 

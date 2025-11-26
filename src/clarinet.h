@@ -36,9 +36,14 @@ struct clarinet_state {
 };
 typedef struct clarinet_state clarinet_state_t;
 
-yajl_handle use_clarinet(clarinet_state_t *init);
-void clarinet_pipe(clarinet_state_t *state, int sockfd);
-void clarinet_free(clarinet_state_t *state);
+typedef struct clarinet {
+    // write "fd" (opaque yajl_handle type)
+    long long writable;
+    struct clarinet_state *state;
+} clarinet_t;
+
+struct clarinet *use_clarinet();
+void clarinet_free(struct clarinet *clr);
 
 #ifndef MAX
 #define MAX(a, b) (a > b ? a : b)
