@@ -46,7 +46,7 @@ SQLITE_EXTENSION_INIT1
 
 static void debug_print_json(const char *label, yyjson_val *val) {
 #ifndef NDEBUG
-    char *s = yyjson_val_write(val, 0, NULL);
+    char *s = yyjson_val_write(val, YYJSON_WRITE_PRETTY_TWO_SPACES, NULL);
     if (s) {
         println("%s: %s", label, s);
         free(s);
@@ -170,6 +170,12 @@ typedef struct {
 typedef struct fetch_cursor {
     sqlite3_vtab_cursor base;
 
+    yyjson_doc   **queue;
+    size_t        queue_cap;
+    size_t        queue_head;
+    size_t        queue_tail;
+    size_t        queue_count;
+
     int sockfd;
     int eof;
 
@@ -177,7 +183,6 @@ typedef struct fetch_cursor {
 
     // Temporary builder state for current JSON object
     yyjson_mut_doc *builder;
-    yyjson_mut_val *current_obj;
     char *current_key;
 
     // Completed row (a fully constructed immutable doc)
@@ -188,8 +193,8 @@ typedef struct fetch_cursor {
     size_t depth;
     yyjson_mut_val *obj_stack[64];
 } fetch_cursor_t;
-
-
+static void queue_push(fetch_cursor_t *cur, yyjson_doc *doc);
+static yyjson_doc *queue_pop(fetch_cursor_t *cur);
 
 #define X_UPDATE_OFFSET 2
 
@@ -654,6 +659,13 @@ static int x_open(sqlite3_vtab *pvtab, sqlite3_vtab_cursor **pp_cursor) {
     memset(cur, 0, sizeof(fetch_cursor_t));
 
     cur->count = 0;
+    cur->json_count = 0;
+    cur->queue_cap = 16;
+    cur->queue = calloc(cur->queue_cap, sizeof(yyjson_doc*));
+    cur->queue_head = 0;
+    cur->queue_tail = 0;
+    cur->queue_count = 0;
+
     *pp_cursor = (sqlite3_vtab_cursor *)cur;
     (*pp_cursor)->pVtab = pvtab;
     return SQLITE_OK;
@@ -666,38 +678,56 @@ static int x_close(sqlite3_vtab_cursor *cur) {
     return SQLITE_OK;
 }
 
-static int x_next(sqlite3_vtab_cursor *pcursor) {
-    fetch_cursor_t *cur = (fetch_cursor_t*)pcursor;
+static int x_next(sqlite3_vtab_cursor *cur0) {
+    fetch_cursor_t *cur = (fetch_cursor_t*)cur0;
 
-    // If we already have next object ready, return it
-    if (cur->next_doc) {
+    println("xNext\ncount=%zu json_count=%zu queue_count=%zu",
+        cur->count,
+        cur->json_count,
+        cur->queue_count
+    );
+
+    // Try reading from queue immediately
+    yyjson_doc *doc = queue_pop(cur);
+    if (doc) {
+        println("xNext next_doc=%p", doc);
+        cur->next_doc = doc;
+        cur->count++;
         return SQLITE_OK;
     }
 
-    // Otherwise: read from socket until YAJL delivers a JSON object
+    // Otherwise: read more JSON until something reaches the queue
     char buf[4096];
-    ssize_t n;
 
-    while ((n = recv(cur->sockfd, buf, sizeof(buf), 0)) > 0) {
-        yajl_status stat = yajl_parse(cur->yajl_handle, (unsigned char*)buf, n);
+    while (!cur->eof) {
+        ssize_t n = recv(cur->sockfd, buf, sizeof(buf), 0);
 
-        if (stat == yajl_status_error) {
-            fprintf(stderr, "YAJL parse error\n");
+        if (n <= 0) {
+            cur->eof = 1;
+            break;
+        }
+
+        yajl_status s = yajl_parse(cur->yajl_handle,
+                                   (unsigned char*)buf, n);
+
+        if (s == yajl_status_error) {
             cur->eof = 1;
             return SQLITE_ERROR;
         }
 
-        // If callbacks created next_doc, break out
-        if (cur->next_doc) {
+        // After parsing, did we get a new doc?
+        doc = queue_pop(cur);
+        if (doc) {
+            cur->next_doc = doc;
+            cur->count++;
             return SQLITE_OK;
         }
     }
 
-    // recv() <= 0 -> no more data
-    cur->eof = 1;
-
-    return SQLITE_OK;
+    // No more data
+    return SQLITE_DONE;
 }
+
 
 static void json_bool_result(
     sqlite3_context *pctx,
@@ -731,87 +761,119 @@ static yyjson_val *follow_generated_path(
     return cur;
 }
 
+static int ensure_next_doc(fetch_cursor_t *cur) {
+    if (cur->next_doc)
+        return SQLITE_OK;
+
+    // First try queue
+    yyjson_doc *doc = queue_pop(cur);
+    if (doc) {
+        cur->next_doc = doc;
+        return SQLITE_OK;
+    }
+
+    // If no queue data but not EOF: read more from socket
+    char buf[4096];
+    ssize_t n;
+
+    while (!cur->next_doc &&
+           (n = recv(cur->sockfd, buf, sizeof(buf), 0)) > 0)
+    {
+        yajl_status stat =
+            yajl_parse(cur->yajl_handle, (unsigned char*)buf, n);
+
+        if (stat == yajl_status_error) {
+            cur->eof = 1;
+            return SQLITE_ERROR;
+        }
+
+        // callbacks will fill queue
+        doc = queue_pop(cur);
+        if (doc) {
+            cur->next_doc = doc;
+            return SQLITE_OK;
+        }
+    }
+
+    // If we reach EOF and still no doc
+    cur->eof = 1;
+    return SQLITE_OK;
+}
+
 /** Populates the Fetch row */
-static int x_column(sqlite3_vtab_cursor *pcursor, sqlite3_context *pctx,
-                    int icol) {
-
+static int x_column(sqlite3_vtab_cursor *pcursor,
+                    sqlite3_context *pctx,
+                    int icol)
+{
     fetch_cursor_t *cursor = (fetch_cursor_t *)pcursor;
-    Fetch *vtab = (Fetch *)pcursor->pVtab;
+    println("xColumn next_doc=%p\n", cursor->next_doc);
 
+    if (!cursor->next_doc) {
+        // No more rows
+        sqlite3_result_null(pctx);
+        return SQLITE_OK;
+    }
+
+    Fetch *vtab = (Fetch *)pcursor->pVtab;
     column_def *def = vtab->columns[icol];
 
-    // Hidden column -> ignore
     if (def->is_hidden) {
         return SQLITE_OK;
     }
 
     yyjson_val *val = yyjson_doc_get_root(cursor->next_doc);
 
-    // 1. Handle `generated always as (...)` path
     if (def->generated_always_as_size > 0) {
         val = follow_generated_path(
             val,
             def->generated_always_as,
             def->generated_always_as_len,
-            def->generated_always_as_size
-        );
+            def->generated_always_as_size);
     } else {
-        // 2. Normal direct-access column
-        val = yyjson_obj_getn(
-            val,
-            def->name,
-            def->name_len
-        );
+        val = yyjson_obj_getn(val, def->name, def->name_len);
     }
 
-    //
-    // 3. If no value found -> NULL
-    //
     if (!val) {
         sqlite3_result_null(pctx);
         return SQLITE_OK;
     }
 
-    //
-    // 4. Return the value depending on JSON type
-    //
-    yyjson_type type = yyjson_get_type(val);
+    switch (yyjson_get_type(val)) {
+    case YYJSON_TYPE_STR:
+        sqlite3_result_text(pctx, yyjson_get_str(val), -1, SQLITE_TRANSIENT);
+        break;
 
-    switch (type) {
-        case YYJSON_TYPE_STR:
-            sqlite3_result_text(pctx, yyjson_get_str(val), -1, SQLITE_TRANSIENT);
-            break;
+    case YYJSON_TYPE_NUM:
+        sqlite3_result_int(pctx, yyjson_get_int(val));
+        break;
 
-        case YYJSON_TYPE_NUM:
-            sqlite3_result_int(pctx, yyjson_get_int(val));
-            break;
+    case YYJSON_TYPE_BOOL:
+        json_bool_result(pctx, def, val);
+        break;
 
-        case YYJSON_TYPE_BOOL:
-            json_bool_result(pctx, def, val);
-            break;
-
-        case YYJSON_TYPE_ARR:
-        case YYJSON_TYPE_OBJ: {
-            char *json = yyjson_val_write(val, 0, NULL);
-            if (json) {
-                sqlite3_result_text(pctx, json, -1, SQLITE_TRANSIENT);
-                free(json);
-            } else {
-                sqlite3_result_null(pctx);
-            }
-            break;
-        }
-
-        default:
+    case YYJSON_TYPE_OBJ:
+    case YYJSON_TYPE_ARR: {
+        char *json = yyjson_val_write(val, 0, NULL);
+        if (json) {
+            sqlite3_result_text(pctx, json, -1, SQLITE_TRANSIENT);
+            free(json);
+        } else {
             sqlite3_result_null(pctx);
+        }
+        break;
+    }
+
+    default:
+        sqlite3_result_null(pctx);
     }
 
     return SQLITE_OK;
 }
 
+
 static int x_eof(sqlite3_vtab_cursor *cur) {
     fetch_cursor_t *c = (fetch_cursor_t*)cur;
-    return c->eof && c->next_doc == NULL;
+    return c->eof && c->queue_count == 0;
 }
 
 
@@ -822,40 +884,33 @@ static int x_rowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
 }
 
 static int handle_null(void *ctx) {
-    println("YAJL: null");
     return 1;
 }
 
 static int handle_bool(void *ctx, int b) {
-    println("YAJL: boolean=%d", b);
     return 1;
 }
 
 static int handle_int(void *ctx, long long i) {
-    println("YAJL: integer=%lld", i);
     return 1;
 }
 
 static int handle_double(void *ctx, double d) {
-    println("YAJL: double=%f", d);
     return 1;
 }
 
 static int handle_number(void *ctx, const char *num, size_t len) {
     fetch_cursor_t *cur = ctx;
 
-    println("YAJL: number=%.*s", (int)len, num);
     char *key = cur->current_key;
 
     if (cur->depth == 0) {
-        println("YAJL: number ignored (not inside an object)");
         return 1;
     }
 
     yyjson_mut_val *obj = cur->obj_stack[cur->depth - 1];
 
     if (!obj || !key) {
-        println("YAJL: number ignored (missing obj or key)");
         return 1;
     }
 
@@ -892,7 +947,6 @@ static int handle_number(void *ctx, const char *num, size_t len) {
 static int handle_string(void *ctx,
                          const unsigned char *str, size_t len) {
     fetch_cursor_t *cur = ctx;
-    println("YAJL: string=%.*s", (int)len, str);
 
     if (!cur->current_key) return 1;
 
@@ -910,7 +964,6 @@ static int handle_string(void *ctx,
 }
 
 static int handle_start_map(void *ctx) {
-    println("YAJL: start map");
     fetch_cursor_t *cur = ctx;
 
     yyjson_mut_val *new_obj;
@@ -920,7 +973,7 @@ static int handle_start_map(void *ctx) {
         cur->builder = yyjson_mut_doc_new(NULL);
         new_obj = yyjson_mut_obj(cur->builder);
         yyjson_mut_doc_set_root(cur->builder, new_obj);
-        println("YAJL: new root object");
+        println("start obj (json_count + 1) %zu, builder = %p", cur->json_count + 1, cur->builder);
     } else {
         // nested map value
         new_obj = yyjson_mut_obj(cur->builder);
@@ -945,35 +998,56 @@ static int handle_map_key(void *ctx,
                        const unsigned char *str,
                        size_t len) {
     fetch_cursor_t *cur = ctx;
-    println("YAJL: map_key=%.*s", (int)len, str);
     cur->current_key = string("%.*s", (int) len, str);
     return 1;
+}
+
+static void queue_push(fetch_cursor_t *cur, yyjson_doc *doc) {
+    if (cur->queue_count == cur->queue_cap) {
+        size_t newcap = cur->queue_cap * 2;
+        yyjson_doc **newbuf = realloc(cur->queue, newcap * sizeof(yyjson_doc*));
+        if (!newbuf) return; // OOM, but safer to drop
+        cur->queue = newbuf;
+        cur->queue_cap = newcap;
+    }
+
+    cur->queue[cur->queue_tail] = doc;
+    cur->queue_tail = (cur->queue_tail + 1) % cur->queue_cap;
+    cur->queue_count++;
+}
+
+static yyjson_doc *queue_pop(fetch_cursor_t *cur) {
+    if (cur->queue_count == 0)
+        return NULL;
+
+    yyjson_doc *doc = cur->queue[cur->queue_head];
+    cur->queue_head = (cur->queue_head + 1) % cur->queue_cap;
+    cur->queue_count--;
+
+    return doc;
 }
 
 static int handle_end_map(void *ctx) {
     fetch_cursor_t *cur = ctx;
 
-    println("YAJL: end map depth=%zu", cur->depth);
-
     cur->depth--;
 
-    if (cur->depth == 0) {
-        // Completed top-level JSON object
+    if (cur->depth== 0) {
+        cur->json_count++;
+        println("end obj %zu, builder = %p", cur->json_count, cur->builder);
         yyjson_doc *final = yyjson_mut_doc_imut_copy(cur->builder, NULL);
 
-        cur->next_doc = final;
+        queue_push(cur, final);
 
-        // debug print
-        char *dump = yyjson_write(final, YYJSON_WRITE_PRETTY_TWO_SPACES, NULL);
-        println("COMPLETE JSON OBJ:\n%s", dump);
-        free(dump);
+        yyjson_mut_doc_free(cur->builder);
+        cur->builder = NULL;
+        cur->current_key = NULL;
     }
 
     return 1;
 }
 
 static int handle_start_array(void *ctx) {
-    println("YAJL: start array");
     return 1;
 }
 
@@ -1038,6 +1112,7 @@ static int x_filter(sqlite3_vtab_cursor *cur0,
 
     Cur->yajl_handle =
         yajl_alloc(&fetch_callbacks, NULL, (void*)Cur);
+    yajl_config(Cur->yajl_handle, yajl_allow_partial_values, 1);
 
     if (!Cur->yajl_handle) {
         Cur->eof = 1;
@@ -1047,12 +1122,11 @@ static int x_filter(sqlite3_vtab_cursor *cur0,
     char buf[4096];
     ssize_t n;
 
-    while (!Cur->next_doc &&
-           (n = recv(Cur->sockfd, buf, sizeof(buf), 0)) > 0)
+    while (Cur->queue_count == 0 &&
+       (n = recv(Cur->sockfd, buf, sizeof(buf), 0)) > 0)
     {
         yajl_status stat =
-            yajl_parse(Cur->yajl_handle,
-                       (unsigned char*)buf, n);
+            yajl_parse(Cur->yajl_handle, (unsigned char*)buf, n);
 
         if (stat == yajl_status_error) {
             Cur->eof = 1;
@@ -1060,56 +1134,13 @@ static int x_filter(sqlite3_vtab_cursor *cur0,
         }
     }
 
-    if (!Cur->next_doc) {
-        println("unable to get initial object head, setting eof");
+    if (Cur->queue_count == 0) {
         Cur->eof = 1;
+        return SQLITE_OK;
     }
 
     return SQLITE_OK;
 }
-
-/**
- * Handles every other query that isn't a `SELECT` query.
- */
-// static int x_update(sqlite3_vtab *pVTab, int argc, sqlite3_value **argv,
-//                     sqlite_int64 *pRowid) {
-//     if (X_UPDATE_IS_INSERT(argc, argv)) {
-//         if (sqlite3_value_type(argv[FETCH_URL + X_UPDATE_OFFSET]) ==
-//             SQLITE_NULL) {
-//             pVTab->zErrMsg =
-//                 sqlite3_mprintf("fetch.xUpdate: no url to INSERT INTO (lol)");
-//             return SQLITE_MISUSE;
-//         }
-//
-//         // open Request streams
-//         const char *req_url = (char *) sqlite3_value_text(argv[FETCH_URL + X_UPDATE_OFFSET]);
-//         char *req_body_buf = (char *) sqlite3_value_text(argv[FETCH_BODY + X_UPDATE_OFFSET]);
-//         FILE *req_body = NULL;
-//         if (req_body_buf) {
-//             size_t req_body_size = 0;
-//             req_body = open_memstream(&req_body_buf, &req_body_size);
-//             if (!req_body) return SQLITE_NOMEM;
-//         }
-//         struct curl_slist *req_headers = curl_slist_from_headers_json((char *) sqlite3_value_text(argv[FETCH_HEADERS + X_UPDATE_OFFSET]));
-//
-//         FILE *resp_headers, *resp_body;
-//         char *resp_headers_buf = NULL, *resp_body_buf = NULL;
-//         size_t resp_headers_size = 0, resp_body_size = 0;
-//         if (open_response(&resp_headers, &resp_headers_buf, &resp_headers_size, &resp_body, &resp_body_buf, &resp_body_size))
-//             return SQLITE_NOMEM;
-//
-//         CURL *curl = fetchcurl((const char *) req_url, FETCH_METHOD_POST, resp_headers, resp_body, req_headers, req_body);
-//         curl_easy_perform(curl);
-//
-//         curl_easy_cleanup(curl);
-//     }
-//
-//     if (X_UPDATE_IS_DELETE(argc, argv)) {
-//         char *url = ((Fetch *) pVTab)->request.url;
-//     }
-//
-//     return SQLITE_OK;
-// }
 
 static sqlite3_module fetch_vtab_module = {
     .iVersion=0,

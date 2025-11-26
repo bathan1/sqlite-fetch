@@ -1,6 +1,7 @@
 #include "fetch.h"
 #include <netdb.h>
 #include <errno.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <string.h>
 #include <curl/curl.h>
@@ -69,7 +70,7 @@ static int forward_content_length(int netfd, int outfd,
 static int forward_until_close(int netfd, int outfd,
                                char **bufp, size_t *buflen);
 static int parse_headers_and_forward(int netfd, int outfd);
-struct url_s *parse_url(const char *url);
+static struct url_s *parse_url(const char *url);
 
 int fetch(const char *url) {
     struct url_s *URL = parse_url(url);
@@ -381,40 +382,32 @@ static int parse_headers_and_forward(int netfd, int outfd)
     char hdrbuf[8192];
     size_t hdrlen = 0;
 
-    // 1. Read until end of headers
     for (;;) {
         ssize_t n = recv(netfd, hdrbuf + hdrlen, sizeof(hdrbuf) - hdrlen, 0);
         if (n <= 0) return -1;
         hdrlen += n;
 
-        // Look for CRLFCRLF
         char *p = memmem(hdrbuf, hdrlen, "\r\n\r\n", 4);
         if (p) {
             size_t header_length = (p - hdrbuf) + 4;
 
-            // We now split: headers in [0 : header_length), body leftover in [header_length : hdrlen)
             size_t body_left = hdrlen - header_length;
             char *body_ptr = hdrbuf + header_length;
 
-            // --- Parse headers ---
-            int is_chunked = 0;
+            bool is_chunked = false;
             size_t content_len = 0;
 
             char *headers = malloc(header_length + 1);
             memcpy(headers, hdrbuf, header_length);
             headers[header_length] = 0;
 
-            // Look for Transfer-Encoding
             if (strcasestr(headers, "transfer-encoding: chunked"))
-                is_chunked = 1;
+                is_chunked = true;
 
-            // Or Content-Length
             char *cl = strcasestr(headers, "content-length:");
             if (cl) content_len = strtoul(cl + 15, NULL, 10);
 
             free(headers);
-
-            // 2. Forward body according to rules
 
             if (is_chunked) {
                 return forward_chunked(netfd, outfd, &body_ptr, &body_left);
@@ -424,7 +417,6 @@ static int parse_headers_and_forward(int netfd, int outfd)
                 return forward_content_length(netfd, outfd, &body_ptr, &body_left, content_len);
             }
 
-            // If neither chunked nor content-length → read until close
             return forward_until_close(netfd, outfd, &body_ptr, &body_left);
         }
     }
@@ -440,7 +432,7 @@ static struct url_s *url_free_error(struct url_s *u) {
     return NULL;
 }
 
-struct url_s *parse_url(const char *url) {
+static struct url_s *parse_url(const char *url) {
     CURLU *u = curl_url();
     if (!u) {
         errno = ENOMEM;
