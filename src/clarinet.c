@@ -38,7 +38,6 @@ static int handle_bool(void *ctx, int b) {
 }
 
 static int handle_int(void *ctx, long long i) {
-    printf("here!\n");
     return 1;
 }
 
@@ -213,7 +212,27 @@ static yajl_callbacks callbacks = {
 
 typedef struct {
     yajl_handle parser;
+    struct clarinet_state *state;
 } ccookie_t;
+
+static ssize_t ccookie_read(void *cookie, char *buf, size_t size) {
+    ccookie_t *c = cookie;
+    clarinet_state_t *st = (clarinet_state_t *) (c->state);
+
+    char *json = queue_pop(&st->queue);
+    if (!json) return 0;
+
+    size_t len = strlen(json);
+
+    if (len > size) {
+        len = size;
+    }
+
+    memcpy(buf, json, len);
+    free(json);
+
+    return len;
+}
 
 static ssize_t ccookie_write(void *cookie, const char *buf, size_t size) {
     ccookie_t *c = cookie;
@@ -223,47 +242,75 @@ static ssize_t ccookie_write(void *cookie, const char *buf, size_t size) {
 
 static int ccookie_free(void *cookie) {
     ccookie_t *cc = (void *) cookie;
-    if (cc) {
-        if (cc->parser) {
-            yajl_free(cc->parser);
-        }
-        free(cc);
+    if (!cc) {
+        return 1;
     }
+
+    if (cc->parser) {
+        yajl_free(cc->parser);
+    }
+    if (cc->state) {
+        free(cc->state);
+    }
+    free(cc);
+
     return 0;
 }
 
-static FILE *ccookie_open(yajl_handle parser) {
+static FILE *ccookie_open(struct clarinet_state *init) {
     ccookie_t *cookie = malloc(sizeof *cookie);
-    cookie->parser = parser;
-
-    cookie_io_functions_t io = {
-        .read  = NULL,
-        .write = ccookie_write,
-        .seek  = NULL,
-        .close = ccookie_free
-    };
-
-    return fopencookie(cookie, "w", io);
-}
-
-struct clarinet *use_clarinet() {
-    clarinet_state_t *init = calloc(1, sizeof(struct clarinet_state));
-    queue_init(&init->queue);
-    init->keys_cap = 1 << 8;
-    init->keys = calloc(1 << 8, sizeof(char *));
-    init->keys_size = 0;
-    yajl_handle handle = yajl_alloc(&callbacks, NULL, (void *) init);
-    if (!handle) {
+    if (!cookie) {
+        queue_free(&init->queue);
+        free(init->keys);
+        free(init);
+        return NULL;
+    }
+    yajl_handle parser = yajl_alloc(&callbacks, NULL, (void *) init);
+    if (!parser) {
         queue_free(&init->queue);
         free(init->keys);
         free(init);
         return NULL;
     }
 
-    struct clarinet *api = calloc(1, sizeof(struct clarinet));
-    api->writable = ccookie_open(handle);
-    api->state = init;
-    return api;
+    cookie->parser = parser;
+    cookie->state = init;
+
+    cookie_io_functions_t io = {
+        .read  = ccookie_read,
+        .write = ccookie_write,
+        .seek  = NULL,
+        .close = ccookie_free
+    };
+
+    return fopencookie(cookie, "r+", io);
+}
+
+struct clarinet *use_clarinet() {
+    clarinet_state_t *init = calloc(1, sizeof(struct clarinet_state));
+    queue_init(&init->queue);
+    if (!&(init->queue)) {
+        perror("queue_init");
+        free(init);
+        return NULL;
+    }
+    init->keys_cap = 1 << 8;
+    init->keys = calloc(1 << 8, sizeof(char *));
+    init->keys_size = 0;
+
+    struct clarinet *clr = calloc(1, sizeof(struct clarinet));
+    FILE *writable = ccookie_open(init);
+    if (!writable) {
+        perror("ccookie_open");
+        queue_free(&init->queue);
+        free(init->keys);
+        free(init);
+        return NULL;
+    }
+    clr->queue = &init->queue;
+    clr->writable = writable;
+    clr->keys = init->keys;
+    return clr;
 }
 
 void clarinet_free(struct clarinet *clr) {
@@ -271,18 +318,18 @@ void clarinet_free(struct clarinet *clr) {
         return;
     }
 
-    if (clr->state) {
-        if (clr->state->keys) {
-            // we free the key buffers but keep the parent poitner until the end
-            free(clr->state->keys);
-        }
-        if (clr->state->queue.handle) {
-            queue_free(&clr->state->queue);
-        }
-        free(clr->state);
-    }
-
-    free(clr);
+    // if (clr->state) {
+    //     if (clr->state->keys) {
+    //         // we free the key buffers but keep the parent poitner until the end
+    //         free(clr->state->keys);
+    //     }
+    //     if (clr->state->queue.handle) {
+    //         queue_free(&clr->state->queue);
+    //     }
+    //     free(clr->state);
+    // }
+    //
+    // free(clr);
 }
 
 #undef push

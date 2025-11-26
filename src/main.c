@@ -7,12 +7,21 @@ int main() {
     int sockfd = fetch("http://jsonplaceholder.typicode.com/todos");
     char buf[4096] = {0};
     ssize_t n = 0;
+
     while ((n = recv(sockfd, buf, sizeof(buf), 0)) > 0) {
-        // want this
         fwrite((unsigned char *) buf, sizeof(char), n, clr->writable);
     }
+
     fclose(clr->writable);
 
-    clarinet_free(clr);
+    // while (clr->queue->count > 0) {
+    //     char *pop = queue_pop(clr->queue);
+    //     // printf("%s\n", pop);
+    //     free(pop);
+    // }
+    queue_free(clr->queue);
+    free(clr->keys);
+    free(clr);
+
     return 0;
 }

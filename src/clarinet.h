@@ -39,7 +39,8 @@ typedef struct clarinet_state clarinet_state_t;
 typedef struct clarinet {
     // write "fd" (opaque yajl_handle type)
     FILE *writable;
-    struct clarinet_state *state;
+    struct queue_s *queue;
+    char **keys;
 } clarinet_t;
 
 struct clarinet *use_clarinet();
@@ -48,7 +49,6 @@ void clarinet_free(struct clarinet *clr);
 #ifndef MAX
 #define MAX(a, b) (a > b ? a : b)
 #endif
-
 
 static void queue_init(struct queue_s *q) {
     q->cap = 8;
