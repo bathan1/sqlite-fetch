@@ -38,7 +38,7 @@ typedef struct clarinet_state clarinet_state_t;
 
 typedef struct clarinet {
     // write "fd" (opaque yajl_handle type)
-    long long writable;
+    FILE *writable;
     struct clarinet_state *state;
 } clarinet_t;
 

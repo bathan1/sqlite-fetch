@@ -211,6 +211,41 @@ static yajl_callbacks callbacks = {
     .yajl_end_array   = handle_end_array
 };
 
+typedef struct {
+    yajl_handle parser;
+} ccookie_t;
+
+static ssize_t ccookie_write(void *cookie, const char *buf, size_t size) {
+    ccookie_t *c = cookie;
+    yajl_parse(c->parser, (const unsigned char *)buf, size);
+    return size;
+}
+
+static int ccookie_free(void *cookie) {
+    ccookie_t *cc = (void *) cookie;
+    if (cc) {
+        if (cc->parser) {
+            yajl_free(cc->parser);
+        }
+        free(cc);
+    }
+    return 0;
+}
+
+static FILE *ccookie_open(yajl_handle parser) {
+    ccookie_t *cookie = malloc(sizeof *cookie);
+    cookie->parser = parser;
+
+    cookie_io_functions_t io = {
+        .read  = NULL,
+        .write = ccookie_write,
+        .seek  = NULL,
+        .close = ccookie_free
+    };
+
+    return fopencookie(cookie, "w", io);
+}
+
 struct clarinet *use_clarinet() {
     clarinet_state_t *init = calloc(1, sizeof(struct clarinet_state));
     queue_init(&init->queue);
@@ -226,7 +261,7 @@ struct clarinet *use_clarinet() {
     }
 
     struct clarinet *api = calloc(1, sizeof(struct clarinet));
-    api->writable = (long) handle;
+    api->writable = ccookie_open(handle);
     api->state = init;
     return api;
 }
@@ -235,22 +270,20 @@ void clarinet_free(struct clarinet *clr) {
     if (!clr) {
         return;
     }
-    if (!clr->state || !clr->writable) {
-        if (clr->state) free(clr->state);
-        if (clr->writable) yajl_free((yajl_handle) clr->writable);
+
+    if (clr->state) {
+        if (clr->state->keys) {
+            // we free the key buffers but keep the parent poitner until the end
+            free(clr->state->keys);
+        }
+        if (clr->state->queue.handle) {
+            queue_free(&clr->state->queue);
+        }
+        free(clr->state);
     }
-    if (clr->state->keys) {
-        // we free the key buffers but keep the parent poitner until the end
-        free(clr->state->keys);
-    }
-    if (clr->state->queue.handle) {
-        queue_free(&clr->state->queue);
-    }
-    yajl_free((yajl_handle) clr->writable);
-    free(clr->state);
+
     free(clr);
 }
-
 
 #undef push
 #undef peek

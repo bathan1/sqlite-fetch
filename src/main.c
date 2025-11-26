@@ -8,8 +8,11 @@ int main() {
     char buf[4096] = {0};
     ssize_t n = 0;
     while ((n = recv(sockfd, buf, sizeof(buf), 0)) > 0) {
-        yajl_parse((yajl_handle) clr->writable, (unsigned char *) buf, n);
+        // want this
+        fwrite((unsigned char *) buf, sizeof(char), n, clr->writable);
     }
+    fclose(clr->writable);
+
     clarinet_free(clr);
     return 0;
 }
