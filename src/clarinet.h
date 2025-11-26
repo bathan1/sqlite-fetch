@@ -15,6 +15,10 @@
 struct clarinet_ctx {
     unsigned int current_depth;
     unsigned int depth;
+
+    char **keys;
+    size_t keys_size;
+    size_t keys_cap;
     // key stack
     char *key[MAX_DEPTH];
     yyjson_mut_doc *doc_root;
@@ -46,12 +50,10 @@ static int handle_number(void *ctx, const char *num, size_t len) {
     clarinet_ctx_t *cur = ctx;
     if (cur->current_depth == 0) {
         fprintf(stderr, "current_depth is 0\n");
-        printf("here0");
         return 0;
     }
     if (!peek(cur, key)) {
         fprintf(stderr, "no parent key value from depth %u\n", cur->current_depth);
-        printf("here1");
         return 0;
     }
 
@@ -135,9 +137,16 @@ static int handle_map_key(void *ctx,
                           size_t len)
 {
     clarinet_ctx_t *cur = ctx;
+    if (cur->keys_size == cur->keys_cap) {
+        // double
+        cur->keys_cap *= 2;
+        cur->keys = realloc(cur->keys, cur->keys_cap);
+    }
 
+    char *next_key = strndup((const char *) str, len);
+    cur->keys[cur->keys_size++] = next_key;
     // Store the new key for this depth
-    peek(cur, key) = strndup((const char *)str, len);
+    peek(cur, key) = next_key;
 
     return 1;
 }
@@ -155,14 +164,19 @@ static int handle_end_map(void *ctx) {
             yyjson_mut_doc_imut_copy(cur->doc_root, NULL);
         if (!final) {
             fprintf(stderr, "could not copy to immutable doc\n");
-        printf("here3");
             return 0;
         }
         yyjson_mut_doc_free(cur->doc_root);
+        yyjson_doc_free(final);
 
-        printf("final:\n%s\n",
-               yyjson_write(final, YYJSON_WRITE_PRETTY_TWO_SPACES, NULL)
-               );
+        for (int i = 0; i < cur->keys_size; i++) {
+            free(cur->keys[i]);
+        }
+        free(cur->keys);
+
+        // printf("final:\n%s\n",
+        //        yyjson_write(final, YYJSON_WRITE_PRETTY_TWO_SPACES, NULL)
+        //        );
 
         // queue_push(cur, final);
 
@@ -197,9 +211,11 @@ static yajl_callbacks callbacks = {
     .yajl_end_array   = handle_end_array
 };
 
-static yajl_handle clarinet() {
-    clarinet_ctx_t *empty = calloc(1, sizeof(clarinet_ctx_t));
-    return yajl_alloc(&callbacks, NULL, (void *) empty);
+static yajl_handle clarinet(clarinet_ctx_t *init) {
+    init->keys_cap = 1 << 8;
+    init->keys = calloc(1 << 8, sizeof(char *));
+    init->keys_size = 0;
+    return yajl_alloc(&callbacks, NULL, (void *) init);
 }
 
 #undef push
