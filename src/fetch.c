@@ -94,6 +94,7 @@ int fetch(const char *url) {
     if (try_connect(sockfd, res) != 0) { url_free(URL); return neg1(ECONNREFUSED); }
 
     freeaddrinfo(res);
+    char *host_value = host(URL);
     buffer *GET = string(
         "GET %s HTTP/1.1\r\n"
         "Host: %s\r\n"
@@ -102,15 +103,17 @@ int fetch(const char *url) {
         "Connection: close\r\n"
         "\r\n",
         URL->pathname,
-        host(URL)
+        host_value
     );
     url_free(URL);
+    free(host_value);
 
     if (!GET) {
         close(sockfd);
         return neg1(errno);
     }
     ssize_t sent = send(sockfd, GET, len(GET), 0);
+    free(GET);
     if (sent < 0) {
         return neg1(errno);
     }
@@ -159,6 +162,10 @@ static int url_free(struct url_s *url) {
     if (url->pathname) {
         count += (free(url->pathname), 1);
     }
+    if (url->port) {
+        count += (free(url->port), 1);
+    }
+    count += (free(url), 1);
     return count;
 }
 
