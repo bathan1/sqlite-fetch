@@ -14,13 +14,12 @@ int main() {
 
     fclose(clr->writable);
 
-    // while (clr->queue->count > 0) {
-    //     char *pop = queue_pop(clr->queue);
-    //     // printf("%s\n", pop);
-    //     free(pop);
-    // }
+    while (clr->queue->count > 0) {
+        char *pop = queue_pop(clr->queue);
+        // printf("%s\n", pop);
+        free(pop);
+    }
     queue_free(clr->queue);
-    free(clr->keys);
     free(clr);
 
     return 0;

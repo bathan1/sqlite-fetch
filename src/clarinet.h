@@ -50,6 +50,7 @@ void clarinet_free(struct clarinet *clr);
 #define MAX(a, b) (a > b ? a : b)
 #endif
 
+
 static void queue_init(struct queue_s *q) {
     q->cap = 8;
     q->handle = calloc(q->cap, sizeof(char *));

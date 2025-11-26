@@ -250,6 +250,9 @@ static int ccookie_free(void *cookie) {
         yajl_free(cc->parser);
     }
     if (cc->state) {
+        if (cc->state->keys) {
+            free(cc->state->keys);
+        }
         free(cc->state);
     }
     free(cc);
