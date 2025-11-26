@@ -709,7 +709,7 @@ static int x_next(sqlite3_vtab_cursor *cur0) {
 
     println("xNext end");
     // No more data
-    return SQLITE_DONE;
+    return SQLITE_OK;
 }
 
 
