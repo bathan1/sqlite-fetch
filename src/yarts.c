@@ -3,7 +3,7 @@
 #include <unistd.h>
 SQLITE_EXTENSION_INIT1
 
-// #define NDEBUG
+#define NDEBUG
 #include <assert.h>
 
 #include <yyjson.h>
@@ -426,13 +426,11 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
         }
 
         normalize_column_name(token[COL_NAME], &token_len[COL_NAME]);
-        column_def *def = malloc(sizeof(column_def));
-        def->is_hidden = false;
+        column_def *def = calloc(1, sizeof(column_def));
         def->name = token[COL_NAME];
         def->name_len = token_len[COL_NAME];
         def->typename = token[COL_TYPE];
         def->typename_len = token_len[COL_TYPE];
-        def->generated_always_as_size = 0;
 
         if (
             token_len[COL_CST] == 9 &&
@@ -491,12 +489,6 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     free(first_line);
 
     println("schema: %s", vtab->schema);
-
-    for (int i = 0; i < vtab->columns_len; i++) {
-        printf("name: %s\n", vtab->columns[i]->name);
-        printf("is_hidden: %s\n", vtab->columns[i]->is_hidden ? "true" : "false");
-        printf("generated_path_size: %zu\n", vtab->columns[i]->generated_always_as_size);
-    }
 
     return vtab;
 }
@@ -776,7 +768,6 @@ static int x_column(sqlite3_vtab_cursor *pcursor,
     yyjson_val *val = yyjson_doc_get_root(cursor->next_doc);
 
     if (def->generated_always_as_size > 0) {
-        printf("%d here?\n", icol);
         val = follow_generated_path(
             val,
             def->generated_always_as,
