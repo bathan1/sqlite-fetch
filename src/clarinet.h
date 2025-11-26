@@ -85,6 +85,16 @@ typedef struct clarinet_state clarinet_state_t;
 #define push(cur, field, value) ((cur->field[cur->current_depth]) = value)
 
 static int handle_null(void *ctx) {
+    clarinet_state_t *state = ctx;
+    if (state->current_depth == 0) {
+        fprintf(stderr, "current_depth is 0\n");
+        return 0;
+    }
+    if (!peek(state, key)) {
+        fprintf(stderr, "no parent key value from depth %u\n", state->current_depth);
+        return 0;
+    }
+    yyjson_mut_obj_add_null(state->doc_root, peek(state, object), peek(state, key));
     return 1;
 }
 
@@ -108,6 +118,7 @@ static int handle_bool(void *ctx, int b) {
 }
 
 static int handle_int(void *ctx, long long i) {
+    printf("here!\n");
     return 1;
 }
 
@@ -277,22 +288,7 @@ static yajl_callbacks callbacks = {
     .yajl_end_array   = handle_end_array
 };
 
-static yajl_handle use_clarinet(clarinet_state_t *init) {
-    queue_init(&init->queue);
-    init->keys_cap = 1 << 8;
-    init->keys = calloc(1 << 8, sizeof(char *));
-    init->keys_size = 0;
-    return yajl_alloc(&callbacks, NULL, (void *) init);
-}
+yajl_handle use_clarinet(clarinet_state_t *init);
 
-static void clarinet_free(clarinet_state_t *state) {
-    free(state->keys);
-    for (int i = 0; i < state->queue.count; i++) {
-        free(state->queue.handle[i]);
-    }
-    free(state->queue.handle);
-}
+void clarinet_free(clarinet_state_t *state);
 
-#undef push
-#undef peek
-#undef MAX_DEPTH

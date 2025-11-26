@@ -15,4 +15,4 @@ CREATE VIRTUAL TABLE todos USING fetch (
     completed TEXT
 );
 
-SELECT * FROM todos;
+SELECT * FROM todos LIMIT 5;
