@@ -81,11 +81,29 @@ struct clarinet_state {
 };
 typedef struct clarinet_state clarinet_state_t;
 
+#define peek(cur, field) (cur->field[cur->current_depth - 1])
+#define push(cur, field, value) ((cur->field[cur->current_depth]) = value)
+
 static int handle_null(void *ctx) {
     return 1;
 }
 
 static int handle_bool(void *ctx, int b) {
+    clarinet_state_t *state = ctx;
+    if (state->current_depth == 0) {
+        fprintf(stderr, "current_depth is 0\n");
+        return 0;
+    }
+    if (!peek(state, key)) {
+        fprintf(stderr, "no parent key value from depth %u\n", state->current_depth);
+        return 0;
+    }
+    yyjson_mut_obj_add_bool(
+        state->doc_root,
+        peek(state, object),
+        peek(state, key),
+        b
+    );
     return 1;
 }
 
@@ -97,8 +115,6 @@ static int handle_double(void *ctx, double d) {
     return 1;
 }
 
-#define peek(cur, field) (cur->field[cur->current_depth - 1])
-#define push(cur, field, value) ((cur->field[cur->current_depth]) = value)
 
 static int handle_number(void *ctx, const char *num, size_t len) {
     clarinet_state_t *cur = ctx;
