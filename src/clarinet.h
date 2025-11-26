@@ -12,10 +12,62 @@
 #endif
 #define MAX_DEPTH 64
 
-struct clarinet_ctx {
+struct queue_s {
+    char   **queue;   // array of char*
+    size_t   cap;     // total capacity
+    size_t   head;    // next pop index
+    size_t   tail;    // next push index
+    size_t   count;   // number of items
+};
+
+static void queue_init(struct queue_s *q) {
+    q->cap = 8;
+    q->queue = calloc(q->cap, sizeof(char *));
+    q->head = q->tail = q->count = 0;
+}
+
+static void queue_push(struct queue_s *q, char *val) {
+    if (q->count == q->cap) {
+        size_t newcap = q->cap * 2;
+        char **newbuf = realloc(q->queue, newcap * sizeof(char *));
+        if (!newbuf) return; // OOM
+        q->queue = newbuf;
+        q->cap   = newcap;
+
+        // Ring-buffer correction when wrapped
+        if (q->tail < q->head) {
+            // move wrapped segment to the end of the new buffer
+            memmove(
+                &q->queue[q->cap / 2 + q->head],
+                &q->queue[q->head],
+                (q->cap/2 - q->head) * sizeof(char *)
+            );
+            q->head += q->cap / 2;
+        }
+    }
+
+    q->queue[q->tail] = val;
+    q->tail = (q->tail + 1) % q->cap;
+    q->count++;
+}
+
+static char *queue_pop(struct queue_s *q) {
+    if (q->count == 0)
+        return NULL;
+
+    char *val = q->queue[q->head];
+    q->head = (q->head + 1) % q->cap;
+    q->count--;
+
+    return val;
+}
+
+struct clarinet_state {
     unsigned int current_depth;
     unsigned int depth;
+    struct queue_s queue;
 
+    // clarinet frees everything from here
     char **keys;
     size_t keys_size;
     size_t keys_cap;
@@ -25,7 +77,7 @@ struct clarinet_ctx {
     // object node stack
     yyjson_mut_val *object[MAX_DEPTH];
 };
-typedef struct clarinet_ctx clarinet_ctx_t;
+typedef struct clarinet_state clarinet_state_t;
 
 static int handle_null(void *ctx) {
     return 1;
@@ -47,7 +99,7 @@ static int handle_double(void *ctx, double d) {
 #define push(cur, field, value) ((cur->field[cur->current_depth]) = value)
 
 static int handle_number(void *ctx, const char *num, size_t len) {
-    clarinet_ctx_t *cur = ctx;
+    clarinet_state_t *cur = ctx;
     if (cur->current_depth == 0) {
         fprintf(stderr, "current_depth is 0\n");
         return 0;
@@ -90,7 +142,7 @@ static int handle_number(void *ctx, const char *num, size_t len) {
 static int handle_string(void *ctx,
                          const unsigned char *str, size_t len)
 {
-    clarinet_ctx_t *cur = ctx;
+    clarinet_state_t *cur = ctx;
 
     if (cur->current_depth == 0 || !peek(cur, key) || !peek(cur, object)) {
         return 0;
@@ -108,7 +160,7 @@ static int handle_string(void *ctx,
 }
 
 static int handle_start_map(void *ctx) {
-    clarinet_ctx_t *cur = ctx;
+    clarinet_state_t *cur = ctx;
     if (cur->current_depth == 0) {
         yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
         yyjson_mut_val *obj = yyjson_mut_obj(doc);
@@ -136,7 +188,7 @@ static int handle_map_key(void *ctx,
                           const unsigned char *str,
                           size_t len)
 {
-    clarinet_ctx_t *cur = ctx;
+    clarinet_state_t *cur = ctx;
     if (cur->keys_size == cur->keys_cap) {
         // double
         cur->keys_cap *= 2;
@@ -152,7 +204,7 @@ static int handle_map_key(void *ctx,
 }
 
 static int handle_end_map(void *ctx) {
-    clarinet_ctx_t *cur = ctx;
+    clarinet_state_t *cur = ctx;
 
 
     if (cur->current_depth == 1) {
@@ -167,19 +219,15 @@ static int handle_end_map(void *ctx) {
             return 0;
         }
         yyjson_mut_doc_free(cur->doc_root);
-        yyjson_doc_free(final);
 
         for (int i = 0; i < cur->keys_size; i++) {
             free(cur->keys[i]);
         }
         free(cur->keys);
 
-        // printf("final:\n%s\n",
-        //        yyjson_write(final, YYJSON_WRITE_PRETTY_TWO_SPACES, NULL)
-        //        );
-
-        // queue_push(cur, final);
-
+        free(cur->queue.queue);
+        // queue_push(&cur->queue, yyjson_write(final, NULL, NULL));
+        yyjson_doc_free(final);
     }
     cur->current_depth--;
     cur->depth = MAX(cur->current_depth, cur->depth);
@@ -211,7 +259,8 @@ static yajl_callbacks callbacks = {
     .yajl_end_array   = handle_end_array
 };
 
-static yajl_handle clarinet(clarinet_ctx_t *init) {
+static yajl_handle clarinet(clarinet_state_t *init) {
+    queue_init(&init->queue);
     init->keys_cap = 1 << 8;
     init->keys = calloc(1 << 8, sizeof(char *));
     init->keys_size = 0;
