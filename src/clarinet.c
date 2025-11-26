@@ -312,7 +312,6 @@ struct clarinet *use_clarinet() {
     }
     clr->queue = &init->queue;
     clr->writable = writable;
-    clr->keys = init->keys;
     return clr;
 }
 

@@ -40,7 +40,6 @@ typedef struct clarinet {
     // write "fd" (opaque yajl_handle type)
     FILE *writable;
     struct queue_s *queue;
-    char **keys;
 } clarinet_t;
 
 struct clarinet *use_clarinet();
