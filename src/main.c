@@ -14,12 +14,12 @@ int main() {
 
     fclose(clr->writable);
 
-    while (clr->queue->count > 0) {
-        char *pop = queue_pop(clr->queue);
+    while (clr->count > 0) {
+        char *pop = clarinet_pop(clr);
+        printf("%s\n", pop);
         free(pop);
     }
-    queue_free(clr->queue);
-    free(clr);
+    clarinet_free(clr);
 
     return 0;
 }

@@ -7,20 +7,26 @@
 #include <yyjson.h>
 #include <yajl/yajl_parse.h>
 
+#ifndef MAX
+#define MAX(a, b) (a > b ? a : b)
+#endif
 #define MAX_DEPTH 64
 
-struct queue_s {
+/// An 'opaque' queue...
+typedef struct clarinet {
     char   **handle;   // array of char* this is what you need to free
     size_t   cap;     // total capacity
     size_t   head;    // next pop index
     size_t   tail;    // next push index
     size_t   count;   // number of items
-};
+
+    FILE *writable;
+} clarinet_t;
 
 struct clarinet_state {
     unsigned int current_depth;
     unsigned int depth;
-    struct queue_s queue;
+    struct clarinet queue;
 
     // clarinet frees everything from here
     char **keys;
@@ -36,74 +42,6 @@ struct clarinet_state {
 };
 typedef struct clarinet_state clarinet_state_t;
 
-typedef struct clarinet {
-    // write "fd" (opaque yajl_handle type)
-    FILE *writable;
-    struct queue_s *queue;
-} clarinet_t;
-
 struct clarinet *use_clarinet();
-void clarinet_free(struct clarinet *clr);
-
-#ifndef MAX
-#define MAX(a, b) (a > b ? a : b)
-#endif
-
-
-static void queue_init(struct queue_s *q) {
-    q->cap = 8;
-    q->handle = calloc(q->cap, sizeof(char *));
-    q->head = q->tail = q->count = 0;
-}
-
-static void queue_free(struct queue_s *q) {
-    if (!q->handle) return;
-
-    for (size_t i = 0; i < q->count; i++) {
-        size_t idx = (q->head + i) % q->cap;
-
-        if (q->handle[idx])
-            free(q->handle[idx]);
-    }
-
-    free(q->handle);
-}
-
-static void queue_push(struct queue_s *q, char *val) {
-    if (q->count == q->cap) {
-        size_t oldcap = q->cap;
-        size_t newcap = oldcap * 2;
-
-        char **newbuf = calloc(newcap, sizeof(char *));
-        if (!newbuf) return;
-
-        // copy linearized existing content into new buffer
-        // in order (head ... oldcap-1, 0 ... head-1)
-        for (size_t i = 0; i < q->count; i++) {
-            size_t idx = (q->head + i) % oldcap;
-            newbuf[i] = q->handle[idx];
-        }
-
-        free(q->handle);
-        q->handle = newbuf;
-
-        q->head = 0;
-        q->tail = q->count;
-        q->cap  = newcap;
-    }
-
-    q->handle[q->tail] = val;
-    q->tail = (q->tail + 1) % q->cap;
-    q->count++;
-}
-
-static char *queue_pop(struct queue_s *q) {
-    if (q->count == 0)
-        return NULL;
-
-    char *val = q->handle[q->head];
-    q->head = (q->head + 1) % q->cap;
-    q->count--;
-
-    return val;
-}
+void clarinet_free(struct clarinet *q);
+char *clarinet_pop(struct clarinet *q);

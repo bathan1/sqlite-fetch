@@ -4,6 +4,40 @@
 #define peek(cur, field) (cur->field[cur->current_depth - 1])
 #define push(cur, field, value) ((cur->field[cur->current_depth]) = value)
 
+static void clarinet_queue_init(struct clarinet *q) {
+    q->cap = 8;
+    q->handle = calloc(q->cap, sizeof(char *));
+    q->head = q->tail = q->count = 0;
+}
+
+static void queue_push(struct clarinet *q, char *val) {
+    if (q->count == q->cap) {
+        size_t oldcap = q->cap;
+        size_t newcap = oldcap * 2;
+
+        char **newbuf = calloc(newcap, sizeof(char *));
+        if (!newbuf) return;
+
+        // copy linearized existing content into new buffer
+        // in order (head ... oldcap-1, 0 ... head-1)
+        for (size_t i = 0; i < q->count; i++) {
+            size_t idx = (q->head + i) % oldcap;
+            newbuf[i] = q->handle[idx];
+        }
+
+        free(q->handle);
+        q->handle = newbuf;
+
+        q->head = 0;
+        q->tail = q->count;
+        q->cap  = newcap;
+    }
+
+    q->handle[q->tail] = val;
+    q->tail = (q->tail + 1) % q->cap;
+    q->count++;
+}
+
 static int handle_null(void *ctx) {
     clarinet_state_t *state = ctx;
     if (state->current_depth == 0) {
@@ -219,7 +253,7 @@ static ssize_t ccookie_read(void *cookie, char *buf, size_t size) {
     ccookie_t *c = cookie;
     clarinet_state_t *st = (clarinet_state_t *) (c->state);
 
-    char *json = queue_pop(&st->queue);
+    char *json = clarinet_pop(&st->queue);
     if (!json) return 0;
 
     size_t len = strlen(json);
@@ -263,14 +297,14 @@ static int ccookie_free(void *cookie) {
 static FILE *ccookie_open(struct clarinet_state *init) {
     ccookie_t *cookie = malloc(sizeof *cookie);
     if (!cookie) {
-        queue_free(&init->queue);
+        clarinet_free(&init->queue);
         free(init->keys);
         free(init);
         return NULL;
     }
     yajl_handle parser = yajl_alloc(&callbacks, NULL, (void *) init);
     if (!parser) {
-        queue_free(&init->queue);
+        clarinet_free(&init->queue);
         free(init->keys);
         free(init);
         return NULL;
@@ -289,9 +323,34 @@ static FILE *ccookie_open(struct clarinet_state *init) {
     return fopencookie(cookie, "r+", io);
 }
 
+void clarinet_free(struct clarinet *q) {
+    if (!q->handle) return;
+
+    for (size_t i = 0; i < q->count; i++) {
+        size_t idx = (q->head + i) % q->cap;
+
+        if (q->handle[idx])
+            free(q->handle[idx]);
+    }
+
+    free(q->handle);
+}
+
+char *clarinet_pop(struct clarinet *q) {
+    if (q->count == 0)
+        return NULL;
+
+    char *val = q->handle[q->head];
+    q->handle[q->head] = 0;
+    q->head = (q->head + 1) % q->cap;
+    q->count--;
+
+    return val;
+}
+
 struct clarinet *use_clarinet() {
     clarinet_state_t *init = calloc(1, sizeof(struct clarinet_state));
-    queue_init(&init->queue);
+    clarinet_queue_init(&init->queue);
     if (!&(init->queue)) {
         perror("queue_init");
         free(init);
@@ -301,37 +360,16 @@ struct clarinet *use_clarinet() {
     init->keys = calloc(1 << 8, sizeof(char *));
     init->keys_size = 0;
 
-    struct clarinet *clr = calloc(1, sizeof(struct clarinet));
     FILE *writable = ccookie_open(init);
     if (!writable) {
         perror("ccookie_open");
-        queue_free(&init->queue);
+        clarinet_free(&init->queue);
         free(init->keys);
         free(init);
         return NULL;
     }
-    clr->queue = &init->queue;
-    clr->writable = writable;
-    return clr;
-}
-
-void clarinet_free(struct clarinet *clr) {
-    if (!clr) {
-        return;
-    }
-
-    // if (clr->state) {
-    //     if (clr->state->keys) {
-    //         // we free the key buffers but keep the parent poitner until the end
-    //         free(clr->state->keys);
-    //     }
-    //     if (clr->state->queue.handle) {
-    //         queue_free(&clr->state->queue);
-    //     }
-    //     free(clr->state);
-    // }
-    //
-    // free(clr);
+    init->queue.writable = writable;
+    return &init->queue;
 }
 
 #undef push
