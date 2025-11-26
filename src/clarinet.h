@@ -51,24 +51,40 @@ static void queue_init(struct queue_s *q) {
     q->head = q->tail = q->count = 0;
 }
 
+static void queue_free(struct queue_s *q) {
+    if (!q->handle) return;
+
+    for (size_t i = 0; i < q->count; i++) {
+        size_t idx = (q->head + i) % q->cap;
+
+        if (q->handle[idx])
+            free(q->handle[idx]);
+    }
+
+    free(q->handle);
+}
+
 static void queue_push(struct queue_s *q, char *val) {
     if (q->count == q->cap) {
-        size_t newcap = q->cap * 2;
-        char **newbuf = realloc(q->handle, newcap * sizeof(char *));
-        if (!newbuf) return; // OOM
-        q->handle = newbuf;
-        q->cap   = newcap;
+        size_t oldcap = q->cap;
+        size_t newcap = oldcap * 2;
 
-        // Ring-buffer correction when wrapped
-        if (q->tail < q->head) {
-            // move wrapped segment to the end of the new buffer
-            memmove(
-                &q->handle[q->cap / 2 + q->head],
-                &q->handle[q->head],
-                (q->cap/2 - q->head) * sizeof(char *)
-            );
-            q->head += q->cap / 2;
+        char **newbuf = calloc(newcap, sizeof(char *));
+        if (!newbuf) return;
+
+        // copy linearized existing content into new buffer
+        // in order (head ... oldcap-1, 0 ... head-1)
+        for (size_t i = 0; i < q->count; i++) {
+            size_t idx = (q->head + i) % oldcap;
+            newbuf[i] = q->handle[idx];
         }
+
+        free(q->handle);
+        q->handle = newbuf;
+
+        q->head = 0;
+        q->tail = q->count;
+        q->cap  = newcap;
     }
 
     q->handle[q->tail] = val;

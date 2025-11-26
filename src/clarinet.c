@@ -169,7 +169,8 @@ static int handle_end_map(void *ctx) {
 
         if (cur->keys) {
             for (int i = 0; i < cur->keys_size; i++) {
-                free(cur->keys[i]);
+                if (cur->keys[i])
+                    free(cur->keys[i]);
             }
         }
         cur->keys_size = 0;
@@ -227,12 +228,7 @@ void clarinet_free(clarinet_state_t *state) {
         free(state->keys);
     }
     if (state->queue.handle) {
-        for (int i = 0; i < state->queue.count; i++) {
-            if (state->queue.handle[i]) {
-                free(state->queue.handle[i]);
-            }
-        }
-        free(state->queue.handle);
+        queue_free(&state->queue);
     }
 }
 
