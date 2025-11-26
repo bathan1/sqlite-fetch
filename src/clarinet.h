@@ -13,7 +13,7 @@
 #define MAX_DEPTH 64
 
 struct queue_s {
-    char   **queue;   // array of char*
+    char   **handle;   // array of char* this is what you need to free
     size_t   cap;     // total capacity
     size_t   head;    // next pop index
     size_t   tail;    // next push index
@@ -22,31 +22,31 @@ struct queue_s {
 
 static void queue_init(struct queue_s *q) {
     q->cap = 8;
-    q->queue = calloc(q->cap, sizeof(char *));
+    q->handle = calloc(q->cap, sizeof(char *));
     q->head = q->tail = q->count = 0;
 }
 
 static void queue_push(struct queue_s *q, char *val) {
     if (q->count == q->cap) {
         size_t newcap = q->cap * 2;
-        char **newbuf = realloc(q->queue, newcap * sizeof(char *));
+        char **newbuf = realloc(q->handle, newcap * sizeof(char *));
         if (!newbuf) return; // OOM
-        q->queue = newbuf;
+        q->handle = newbuf;
         q->cap   = newcap;
 
         // Ring-buffer correction when wrapped
         if (q->tail < q->head) {
             // move wrapped segment to the end of the new buffer
             memmove(
-                &q->queue[q->cap / 2 + q->head],
-                &q->queue[q->head],
+                &q->handle[q->cap / 2 + q->head],
+                &q->handle[q->head],
                 (q->cap/2 - q->head) * sizeof(char *)
             );
             q->head += q->cap / 2;
         }
     }
 
-    q->queue[q->tail] = val;
+    q->handle[q->tail] = val;
     q->tail = (q->tail + 1) % q->cap;
     q->count++;
 }
@@ -55,7 +55,7 @@ static char *queue_pop(struct queue_s *q) {
     if (q->count == 0)
         return NULL;
 
-    char *val = q->queue[q->head];
+    char *val = q->handle[q->head];
     q->head = (q->head + 1) % q->cap;
     q->count--;
 
@@ -189,10 +189,10 @@ static int handle_map_key(void *ctx,
                           size_t len)
 {
     clarinet_state_t *cur = ctx;
-    if (cur->keys_size == cur->keys_cap) {
+    if (cur->keys_size >= cur->keys_cap) {
         // double
         cur->keys_cap *= 2;
-        cur->keys = realloc(cur->keys, cur->keys_cap);
+        cur->keys = realloc(cur->keys, cur->keys_cap * sizeof(char *));
     }
 
     char *next_key = strndup((const char *) str, len);
@@ -205,9 +205,8 @@ static int handle_map_key(void *ctx,
 
 static int handle_end_map(void *ctx) {
     clarinet_state_t *cur = ctx;
-
-
     if (cur->current_depth == 1) {
+        printf("r...\n");
         // closing root object because root object set depth to 1,
         // so that any nested object child can recursively push its own
         // node to the key / parent stack
@@ -223,11 +222,14 @@ static int handle_end_map(void *ctx) {
         for (int i = 0; i < cur->keys_size; i++) {
             free(cur->keys[i]);
         }
-        free(cur->keys);
+        cur->keys_size = 0;
 
-        free(cur->queue.queue);
-        // queue_push(&cur->queue, yyjson_write(final, NULL, NULL));
+        // we push to queue
+        queue_push(&cur->queue, yyjson_write(final, NULL, NULL));
+
+        // free(cur->queue.handle);
         yyjson_doc_free(final);
+        printf("out...\n");
     }
     cur->current_depth--;
     cur->depth = MAX(cur->current_depth, cur->depth);

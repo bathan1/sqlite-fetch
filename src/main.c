@@ -5,15 +5,24 @@ int main() {
     yajl_handle handle = clarinet(&ctx);
 
     unsigned char myJson[] = 
-        "{\"hello\": \"world\","
-        "\"int\": 3,"
-        "\"float\": 1.5,"
-        "\"object\": {\"depth\": 1}"
-        "}"
+        "["
+            "{\"hello\": \"world\","
+            "\"int\": 3,"
+            "\"float\": 1.5,"
+            "\"object\": {\"depth\": 1}"
+            "},"
+            "{\"foo\": \"bar\","
+            "\"int\": 3,"
+            "\"float\": 1.5,"
+            "\"object\": {\"depth\": 1}"
+            "}"
+        "]"
     ;
     yajl_status stat = yajl_parse(handle, myJson, sizeof(myJson) - 1);
     printf("%s\n", yajl_status_to_string(stat));
     yajl_free(handle);
+
+    printf("%zu objects in queue", ctx.queue.count);
 
     return 0;
 }
