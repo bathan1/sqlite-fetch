@@ -26,7 +26,7 @@ typedef struct clarinet {
 struct clarinet_state {
     unsigned int current_depth;
     unsigned int depth;
-    struct clarinet queue;
+    struct clarinet *queue;
 
     // clarinet frees everything from here
     char **keys;

@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+#include "common.h"
 #include "fetch.h"
 #include <netdb.h>
 #include <errno.h>
@@ -5,11 +7,6 @@
 #include <unistd.h>
 #include <string.h>
 #include <curl/curl.h>
-
-/** Sets {@link errno} to ERROR_CODE so you don't have to every time. */
-static void *null(int error_code);
-static long long zero (int error_code);
-static long long neg1 (int error_code);
 
 /**
  * Taken from Web API URL, word 4 word, bar 4 bar.
@@ -123,19 +120,6 @@ int fetch(const char *url) {
     close(fetch_fd);
 
     return app_fd;
-}
-
-static void *null(int error_code) {
-    errno = error_code;
-    return NULL;
-}
-
-static long long zero (int error_code) {
-    return (long long) null(error_code);
-}
-
-long long neg1 (int error_code) {
-    return zero(error_code) - 1;
 }
 
 

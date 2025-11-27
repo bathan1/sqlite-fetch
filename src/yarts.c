@@ -3,6 +3,7 @@
 #include <unistd.h>
 SQLITE_EXTENSION_INIT1
 
+// uncomment to remove all debug prints
 // #define NDEBUG
 #include <assert.h>
 

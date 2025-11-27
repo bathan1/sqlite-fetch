@@ -58,21 +58,6 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(sqlite)
 set(SQLITE_TREE "${sqlite_SOURCE_DIR}")
 
-FetchContent_Declare(
-    uthash
-    GIT_REPOSITORY https://github.com/troydhanson/uthash
-    GET_TAG master
-)
-
-FetchContent_MakeAvailable(uthash)
-
-# Tell CMake to create an INTERFACE library from the header
-add_library(uthash INTERFACE)
-target_include_directories(uthash INTERFACE
-  $<BUILD_INTERFACE:${uthash_SOURCE_DIR}/src>
-  $<INSTALL_INTERFACE:include>
-)
-
 ## yyjson for json parsing
 FetchContent_Declare(
     yyjson
@@ -235,7 +220,6 @@ if(BUILD_FETCH)
   endif()
 
   target_link_libraries(yarts PRIVATE
-    uthash
     yyjson
     yajl
     ${CURL_LINK_TARGET}    # system or FC (static/dynamic)

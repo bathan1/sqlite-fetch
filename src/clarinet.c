@@ -1,5 +1,6 @@
+#define _GNU_SOURCE
+#include "common.h"
 #include "clarinet.h"
-#include <sys/socket.h>
 
 #define peek(cur, field) (cur->field[cur->current_depth - 1])
 #define push(cur, field, value) ((cur->field[cur->current_depth]) = value)
@@ -209,7 +210,7 @@ static int handle_end_map(void *ctx) {
         cur->keys_size = 0;
 
         // we push to queue
-        queue_push(&cur->queue, yyjson_write(final, cur->pp_flags, NULL));
+        queue_push(cur->queue, yyjson_write(final, cur->pp_flags, NULL));
 
         // free(cur->queue.handle);
         yyjson_doc_free(final);
@@ -253,7 +254,7 @@ static ssize_t ccookie_read(void *cookie, char *buf, size_t size) {
     ccookie_t *c = cookie;
     clarinet_state_t *st = (clarinet_state_t *) (c->state);
 
-    char *json = clarinet_pop(&st->queue);
+    char *json = clarinet_pop(st->queue);
     if (!json) return 0;
 
     size_t len = strlen(json);
@@ -297,14 +298,14 @@ static int ccookie_free(void *cookie) {
 static FILE *ccookie_open(struct clarinet_state *init) {
     ccookie_t *cookie = malloc(sizeof *cookie);
     if (!cookie) {
-        clarinet_free(&init->queue);
+        clarinet_free(init->queue);
         free(init->keys);
         free(init);
         return NULL;
     }
     yajl_handle parser = yajl_alloc(&callbacks, NULL, (void *) init);
     if (!parser) {
-        clarinet_free(&init->queue);
+        clarinet_free(init->queue);
         free(init->keys);
         free(init);
         return NULL;
@@ -350,12 +351,10 @@ char *clarinet_pop(struct clarinet *q) {
 
 struct clarinet *use_clarinet() {
     clarinet_state_t *init = calloc(1, sizeof(struct clarinet_state));
-    queue_init(&init->queue);
-    if (!&(init->queue)) {
-        perror("queue_init");
-        free(init);
-        return NULL;
-    }
+    if (!init) return null(ENOMEM);
+    init->queue = calloc(1, sizeof(struct clarinet));
+    if (!init->queue) return null(ENOMEM);
+    queue_init(init->queue);
     init->keys_cap = 1 << 8;
     init->keys = calloc(1 << 8, sizeof(char *));
     init->keys_size = 0;
@@ -363,13 +362,13 @@ struct clarinet *use_clarinet() {
     FILE *writable = ccookie_open(init);
     if (!writable) {
         perror("ccookie_open");
-        clarinet_free(&init->queue);
+        clarinet_free(init->queue);
         free(init->keys);
         free(init);
         return NULL;
     }
-    init->queue.writable = writable;
-    return &init->queue;
+    init->queue->writable = writable;
+    return init->queue;
 }
 
 #undef push

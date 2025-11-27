@@ -13,6 +13,7 @@ int main() {
     }
 
     fclose(clr->writable);
+    printf("Closed? Queue has size %lu\n", clr->count);
 
     while (clr->count > 0) {
         char *pop = clarinet_pop(clr);
