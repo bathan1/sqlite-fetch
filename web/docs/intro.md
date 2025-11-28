@@ -24,7 +24,7 @@ Install the extension from the Github releases page and open SQLite.
 The default release is Linux x86_64:
 
 ```bash
-curl -LO https://github.com/bathan1/sqlite-fetch/releases/download/latest/libyarts.so
+curl -LO https://github.com/bathan1/yarts/releases/latest/download/libyarts.so
 sqlite3
 ```
 
