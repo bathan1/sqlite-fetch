@@ -18,7 +18,6 @@ int main() {
         free(obj);
         count++;
     }
-
     return 0;
 }
 

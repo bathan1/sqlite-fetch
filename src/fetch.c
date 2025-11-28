@@ -698,6 +698,7 @@ static void *fetcher(void *arg) {
     close(fs->outfd);
     close(fs->ep);
 
+    fclose(fs->clare->writable);
     clarq_free(fs->clare);
     free(fs);
 

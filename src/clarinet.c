@@ -325,7 +325,7 @@ static FILE *ccookie_open(struct clarinet_state *init) {
 }
 
 void clarq_free(struct clarinet *q) {
-    if (!q->handle) return;
+    if (!q || !q->handle) return;
 
     for (size_t i = 0; i < q->count; i++) {
         size_t idx = (q->head + i) % q->cap;
@@ -335,6 +335,7 @@ void clarq_free(struct clarinet *q) {
     }
 
     free(q->handle);
+    free(q);
 }
 
 char *clarq_pop(struct clarinet *q) {
