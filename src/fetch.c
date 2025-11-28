@@ -23,9 +23,8 @@ struct fetch_state {
     char header_buf[8192];  // store header bytes
     size_t header_len;
 
-    /* --- TRANSFER MODE --- */
-    bool chunked_mode;      // true if "Transfer-Encoding: chunked"
-    size_t content_length;  // only used if not chunked
+    bool chunked_mode;
+    size_t content_length;
 
     /* --- CHUNKED DECODING STATE --- */
     bool reading_chunk_size;    // true = reading hex size line
@@ -45,6 +44,8 @@ struct fetch_state {
     /* --- TERMINATION STATE --- */
     bool http_done;             // reached end of chunked stream or TCP closed
     bool closed_outfd;          // have we closed outfd yet?
+
+    size_t total_body_bytes;
 };
 
 /**
@@ -99,7 +100,7 @@ static void handle_http_body(struct fetch_state *st);
 static bool flush_pending(struct fetch_state *st);
 static void flush_json_queue(struct fetch_state *st);
 
-static void *fetch_worker_thread(void *arg); 
+static void *fetcher(void *arg); 
 
 int fetch(const char *url) {
     struct url *URL = parse_url(url);
@@ -192,7 +193,7 @@ int fetch(const char *url) {
 
     // spawn background worker thread
     pthread_t tid;
-    pthread_create(&tid, NULL, fetch_worker_thread, fs);
+    pthread_create(&tid, NULL, fetcher, fs);
 
     // detach so it cleans up after finishing
     pthread_detach(tid);
@@ -356,10 +357,8 @@ static void handle_http_body_bytes(struct fetch_state *st,
     size_t i = 0;
 
     while (i < len) {
-
         /* 1. READ THE CHUNK-SIZE LINE */
         if (st->reading_chunk_size) {
-
             char c = data[i++];
 
             // Accumulate until CRLF
@@ -378,17 +377,15 @@ static void handle_http_body_bytes(struct fetch_state *st,
                 st->chunk_line_len = 0;
 
                 if (st->current_chunk_size == 0) {
-                    // FINAL CHUNK
+                    printf("set (OK)\n");
                     st->http_done = true;
                 } else {
-                    // Switch to reading payload
                     st->reading_chunk_size = false;
                 }
 
                 continue;
             }
 
-            // Normal hex digit or extension
             if (st->chunk_line_len < sizeof(st->chunk_line) - 1) {
                 st->chunk_line[st->chunk_line_len++] = c;
             }
@@ -398,7 +395,6 @@ static void handle_http_body_bytes(struct fetch_state *st,
 
         /* 2. READ CHUNK PAYLOAD */
         if (!st->reading_chunk_size && st->current_chunk_size > 0) {
-
             size_t available = len - i;
             size_t need = st->current_chunk_size;
 
@@ -410,16 +406,20 @@ static void handle_http_body_bytes(struct fetch_state *st,
             i += to_copy;
             st->current_chunk_size -= to_copy;
 
-            // If not enough bytes to finish payload, exit now
-            if (st->current_chunk_size > 0)
-                return;
+            st->total_body_bytes += to_copy;
+            printf("%zu\n", st->total_body_bytes);
 
-            // Payload exactly finished → expect CRLF next
+            // If not enough bytes to finish payload, exit now
+            if (st->current_chunk_size > 0) {
+                return;
+            }
+
+            // Payload exactly finished expect CRLF next
             // so switch to CRLF-skip mode
             if (st->current_chunk_size == 0) {
                 // Next bytes should be "\r\n"
                 st->reading_chunk_size = false; // momentary
-                st->expecting_crlf = 2;        // NEW STATE WE ADD
+                st->expecting_crlf = 2;
             }
 
             continue;
@@ -494,6 +494,7 @@ static bool handle_http_headers(struct fetch_state *st) {
 
         else if (n == 0) {
             // Server closed unexpectedly before sending full headers
+            printf("set 2\n");
             st->http_done = true;
             return false;
         }
@@ -513,7 +514,7 @@ static void handle_http_body(struct fetch_state *st) {
     char buf[4096];
 
     ssize_t n = recv(st->netfd, buf, sizeof(buf), 0);
-    fwrite(buf, sizeof(buf), 1, stdout);
+    // fwrite(buf, n, 1, stdout);
 
     if (n > 0) {
         // feed raw bytes to chunk/body parser
@@ -523,6 +524,7 @@ static void handle_http_body(struct fetch_state *st) {
 
     if (n == 0) {
         // TCP closed — if chunked, this could be abrupt
+        printf("set 3 (tcp closed)\n");
         st->http_done = true;
         return;
     }
@@ -579,7 +581,6 @@ static void flush_json_queue(struct fetch_state *st) {
         char *obj = cqpop(st->clare);
         size_t len = strlen(obj);
 
-        /* Build the wire format: [8-byte length][json bytes] */
         size_t total = 8 + len;
         char *buf = malloc(total);
         if (!buf) {
@@ -601,14 +602,6 @@ static void flush_json_queue(struct fetch_state *st) {
             continue; // go to next object
         }
 
-        if (n >= 0) {
-            /* Partial write → store remainder */
-            st->pending_send = buf;
-            st->pending_off = (size_t)n;
-            st->pending_len = total - (size_t)n;
-            return;
-        }
-
         /* send() returned -1 */
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             st->pending_send = buf;
@@ -628,13 +621,14 @@ static void flush_json_queue(struct fetch_state *st) {
         st->clare->count == 0 &&
         st->pending_len == 0 &&
         !st->closed_outfd) {
+        printf("closing!\n");
 
         close(st->outfd);
         st->closed_outfd = true;
     }
 }
 
-static void *fetch_worker_thread(void *arg) {
+static void *fetcher(void *arg) {
     struct fetch_state *fs = arg;
     struct epoll_event events[4];
 
@@ -662,6 +656,9 @@ static void *fetch_worker_thread(void *arg) {
         }
     }
 
+    if (fs->clare->count > 0) {
+        flush_json_queue(fs);
+    }
     // cleanup
     close(fs->netfd);
     close(fs->outfd);
