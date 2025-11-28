@@ -3,11 +3,10 @@ sidebar_position: 1
 ---
 
 # Introduction
+*Yet Another Runtime TCP Stream for SQLite*, or *yarts* for short, is an SQLite runtime extension.
 
-Yet Another Runtime TCP Stream for SQLite, or yarts for short,
-is an SQLite runtime extension.
-
-It provides TCP networking capabilities to SQLite.
+It provides TCP networking capabilities to SQLite and wraps a simple HTTP client over 
+the transport.
 
 Let's discover **yarts in less than 5 minutes**.
 
@@ -41,10 +40,9 @@ Optionally format the cli:
 .mode box
 ```
 
-This links the `fetch` virtual table library with SQLite.
+You have now linked the `fetch` virtual table library with SQLite.
 
 ## Write your Queries
-
 Create a Virtual Table by declaring your expected payload shape with the `fetch` virtual table:
 
 ```sql
@@ -117,3 +115,5 @@ query:
 SELECT * FROM todos LIMIT 5;
 ```
 
+In general, you *should* set a default URL if you know that you're
+only pinging 1 endpoint per `fetch` virtual table.

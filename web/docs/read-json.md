@@ -1,5 +1,5 @@
 ---
-sidebar_position: 1
+sidebar_position: 2
 ---
 
 # Read JSON
@@ -283,3 +283,5 @@ WHERE body = '$.entry[*].resource';
 sqlite> SELECT * FROM patients WHERE body = '$.entry[*].resource';
 TODO: PASTEME
 ```
+
+So you have some flexibility when it comes to the exact shape of your API resources.

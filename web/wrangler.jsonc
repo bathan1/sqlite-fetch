@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sqlite-fetch",
+  "name": "yarts",
   "compatibility_date": "2025-06-03",
   "workers_dev": true,
   "assets": {
