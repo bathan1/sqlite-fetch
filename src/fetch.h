@@ -24,6 +24,15 @@ typedef struct fetch_init fetch_init_t;
 int fetch(const char *url, struct fetch_init init);
 
 /**
+ * Pop the next parser framed object from the fetch buffer at FD. If LENGTH is passed in, 
+ * this sets LENGTH to the length of the bytes *not including NULL TERMINATOR*, 
+ * meaning the returned char buffer has total size `LENGTH + 1`.
+ *
+ * Returns NULL either on EOF.
+ */
+char *fetch_pop(int fd, size_t *length);
+
+/**
  * A 'fat' string that stores the c string first, then
  * stores its size after the null terminator '\0'.
  *

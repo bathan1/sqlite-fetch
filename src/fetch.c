@@ -201,6 +201,45 @@ int fetch(const char *url, struct fetch_init init) {
     return app_fd;
 }
 
+static ssize_t read_full(int fd, void *buf, size_t len) {
+    size_t off = 0;
+    while (off < len) {
+        ssize_t n = recv(fd, (char*)buf + off, len - off, 0);
+        if (n == 0) {
+            return 0;
+        }
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                continue;
+            }
+            return -1;               // real error
+        }
+        off += n;
+    }
+    return off;
+}
+
+char *fetch_pop(int fd, size_t *length) {
+    uint64_t len = 0;
+    for (;;) {
+        ssize_t n = read_full(fd, &len, sizeof(len));
+        if (n == 0) {
+            return NULL;
+        } else if (n < 0) {continue;}
+
+        if (length) {
+            *length = len;
+        }
+        char *obj = malloc(len + 1);
+        if (!obj) {return NULL;}
+
+        ssize_t m = read_full(fd, obj, len);
+        if (m == 0) { free(obj); return NULL; }
+        if (m < 0) { free(obj); continue; }
+        obj[len] = 0;
+        return obj;
+    }
+}
 
 static char *host(struct url *url) {
     if (!url || !url->hostname) { return null(EINVAL); }
