@@ -98,11 +98,11 @@ static void handle_http_body_bytes(struct fetch_state *st,
 static void handle_http_body(struct fetch_state *st);
 
 static bool flush_pending(struct fetch_state *st);
-static void flush_json_queue(struct fetch_state *st);
+static void flush_clarq(struct fetch_state *st);
 
 static void *fetcher(void *arg); 
 
-int fetch(const char *url) {
+int fetch(const char *url, struct fetch_init init) {
     struct url *URL = parse_url(url);
     if (!URL) {
         return neg1(errno);
@@ -564,7 +564,7 @@ static bool flush_pending(struct fetch_state *st) {
     return true; // pending fully flushed
 }
 
-static void flush_json_queue(struct fetch_state *st) {
+static void flush_clarq(struct fetch_state *st) {
     /* 1. First, flush any partially-sent object. */
     if (st->pending_len > 0) {
         if (!flush_pending(st))
@@ -573,7 +573,7 @@ static void flush_json_queue(struct fetch_state *st) {
 
     /* 2. Now flush new items from Clarinet's queue */
     while (st->clare->count > 0) {
-        char *obj = cqpop(st->clare);
+        char *obj = clarq_pop(st->clare);
         size_t len = strlen(obj);
 
         size_t total = 8 + len;
@@ -645,20 +645,21 @@ static void *fetcher(void *arg) {
             }
 
             if (fd == fs->outfd && (ev & EPOLLOUT)) {
-                flush_json_queue(fs);
+                flush_clarq(fs);
             }
         }
     }
 
+    // check once more
     if (fs->clare->count > 0) {
-        flush_json_queue(fs);
+        flush_clarq(fs);
     }
     // cleanup
     close(fs->netfd);
     close(fs->outfd);
     close(fs->ep);
 
-    cqfree(fs->clare);
+    clarq_free(fs->clare);
     free(fs);
 
     return NULL;

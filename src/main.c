@@ -22,7 +22,7 @@ ssize_t read_full(int fd, void *buf, size_t len) {
 }
 
 int main() {
-    int fd = fetch("http://jsonplaceholder.typicode.com/todos");
+    int fd = fetch("http://jsonplaceholder.typicode.com/todos", (fetch_init_t) {0});
 
     uint64_t len;
 
@@ -30,10 +30,8 @@ int main() {
     while (1) {
         ssize_t n = read_full(fd, &len, sizeof(len));
 
-        if (n == 0) break;   // EOF → done
+        if (n == 0) break;
         if (n < 0) {
-            // no data yet → try again
-            // but do NOT keep calling malloc on uninitialized len!
             continue;
         }
 
@@ -43,13 +41,12 @@ int main() {
         ssize_t m = read_full(fd, obj, len);
         if (m == 0) { free(obj); break; }
         if (m < 0) { free(obj); continue; }
+        printf("%s\n", obj);
 
         obj[len] = 0;
         free(obj);
         count++;
     }
-
-    printf("main read %d total items\n", count);
 
     close(fd);
     return 0;
