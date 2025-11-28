@@ -377,7 +377,6 @@ static void handle_http_body_bytes(struct fetch_state *st,
                 st->chunk_line_len = 0;
 
                 if (st->current_chunk_size == 0) {
-                    printf("set (OK)\n");
                     st->http_done = true;
                 } else {
                     st->reading_chunk_size = false;
@@ -407,7 +406,6 @@ static void handle_http_body_bytes(struct fetch_state *st,
             st->current_chunk_size -= to_copy;
 
             st->total_body_bytes += to_copy;
-            printf("%zu\n", st->total_body_bytes);
 
             // If not enough bytes to finish payload, exit now
             if (st->current_chunk_size > 0) {
@@ -494,7 +492,6 @@ static bool handle_http_headers(struct fetch_state *st) {
 
         else if (n == 0) {
             // Server closed unexpectedly before sending full headers
-            printf("set 2\n");
             st->http_done = true;
             return false;
         }
@@ -514,7 +511,6 @@ static void handle_http_body(struct fetch_state *st) {
     char buf[4096];
 
     ssize_t n = recv(st->netfd, buf, sizeof(buf), 0);
-    // fwrite(buf, n, 1, stdout);
 
     if (n > 0) {
         // feed raw bytes to chunk/body parser
@@ -524,7 +520,6 @@ static void handle_http_body(struct fetch_state *st) {
 
     if (n == 0) {
         // TCP closed — if chunked, this could be abrupt
-        printf("set 3 (tcp closed)\n");
         st->http_done = true;
         return;
     }
@@ -621,7 +616,6 @@ static void flush_json_queue(struct fetch_state *st) {
         st->clare->count == 0 &&
         st->pending_len == 0 &&
         !st->closed_outfd) {
-        printf("closing!\n");
 
         close(st->outfd);
         st->closed_outfd = true;

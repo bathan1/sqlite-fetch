@@ -8,7 +8,6 @@ ssize_t read_full(int fd, void *buf, size_t len) {
     while (off < len) {
         ssize_t n = recv(fd, (char*)buf + off, len - off, 0);
         if (n == 0) {
-            printf("EOF\n");
             return 0;
         }
         if (n < 0) {
