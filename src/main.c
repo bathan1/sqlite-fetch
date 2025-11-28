@@ -4,7 +4,7 @@
 #include <unistd.h>
 
 int main() {
-    int fd = fetch("http://jsonplaceholder.typicode.com/todos", (fetch_init_t) {0});
+    int fd = fetch("https://jsonplaceholder.typicode.com/todos", (fetch_init_t) {0});
 
     uint64_t len = 0;
     int count = 0;

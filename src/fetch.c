@@ -2,6 +2,8 @@
 #include "common.h"
 #include "clarinet.h"
 #include "fetch.h"
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 #include <pthread.h>
 #include <netdb.h>
 #include <fcntl.h>
@@ -17,6 +19,11 @@ struct fetch_state {
     int netfd;        // TCP socket (nonblocking)
     int outfd;        // socketpair writer FD (nonblocking)
     int ep;           // epoll instance FD
+    
+    char *hostname;
+    bool is_tls;
+    SSL_CTX *ssl_ctx;
+    SSL     *ssl; 
 
     /* --- HTTP HEADER PARSING --- */
     bool headers_done;
@@ -44,8 +51,6 @@ struct fetch_state {
     /* --- TERMINATION STATE --- */
     bool http_done;             // reached end of chunked stream or TCP closed
     bool closed_outfd;          // have we closed outfd yet?
-
-    size_t total_body_bytes;
 };
 
 /**
@@ -91,6 +96,13 @@ static void set_nonblocking(int fd) {
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
+static ssize_t net_recv(struct fetch_state *st, void *buf, size_t len) {
+    if (!st->is_tls)
+        return recv(st->netfd, buf, len, 0);
+    else
+        return SSL_read(st->ssl, buf, len);
+}
+
 static bool handle_http_headers(struct fetch_state *st);
 static void handle_http_body_bytes(struct fetch_state *st,
                                    const char *data,
@@ -103,6 +115,11 @@ static void flush_clarq(struct fetch_state *st);
 static void *fetcher(void *arg); 
 
 int fetch(const char *url, struct fetch_init init) {
+    struct fetch_state *fs = calloc(1, sizeof(struct fetch_state));
+    if (!fs) {
+        return -1;
+    }
+    fs->is_tls = strncmp(url, "https://", 8) == 0;
     struct url *URL = parse_url(url);
     if (!URL) {
         return neg1(errno);
@@ -110,6 +127,8 @@ int fetch(const char *url, struct fetch_init init) {
 
     int sv[2] = {0};
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
+        url_free(URL);
+        free(fs);
         return neg1(errno);
     }
     int app_fd = sv[0];
@@ -118,15 +137,55 @@ int fetch(const char *url, struct fetch_init init) {
 
     struct addrinfo *res = 0;
     int rc = tcp_getaddrinfo(URL, &res);
-    if (rc != 0) { return neg1(errno); }
+    if (rc != 0) { 
+        url_free(URL);
+        free(fs);
+        return neg1(errno);
+    }
 
     int sockfd = try_socket(res);
-    if (sockfd < 0) { url_free(URL); return neg1(ENOMEM); }
-    if (try_connect(sockfd, res) != 0) { url_free(URL); return neg1(ECONNREFUSED); }
+    if (sockfd < 0) { url_free(URL); free(fs); return neg1(ENOMEM); }
+    if (try_connect(sockfd, res) != 0) { url_free(URL); free(fs); return neg1(ECONNREFUSED); }
+    if (fs->is_tls) {
+        SSL_load_error_strings();
+        OpenSSL_add_ssl_algorithms();
+
+        fs->ssl_ctx = SSL_CTX_new(TLS_client_method());
+        if (!fs->ssl_ctx) {
+            close(sockfd);
+            close(fetch_fd);
+            free(fs);
+            return neg1(errno);
+        }
+
+        fs->ssl = SSL_new(fs->ssl_ctx);
+        if (!fs->ssl) {
+            SSL_CTX_free(fs->ssl_ctx);
+            close(sockfd);
+            close(fetch_fd);
+            free(fs);
+            return neg1(errno);
+        }
+
+        SSL_set_fd(fs->ssl, sockfd);
+        fs->hostname = strdup(URL->hostname);
+        SSL_set_tlsext_host_name(fs->ssl, fs->hostname);
+
+        int err = SSL_connect(fs->ssl);
+        if (err <= 0) {
+            ERR_print_errors_fp(stderr);
+            SSL_free(fs->ssl);
+            SSL_CTX_free(fs->ssl_ctx);
+            close(sockfd);
+            close(fetch_fd);
+            free(fs);
+            return -1;
+        }
+    }
+
     set_nonblocking(sockfd);
 
     freeaddrinfo(res);
-    char *host_value = host(URL);
     buffer *GET = string(
         "GET %s HTTP/1.1\r\n"
         "Host: %s\r\n"
@@ -135,22 +194,27 @@ int fetch(const char *url, struct fetch_init init) {
         "Connection: close\r\n"
         "\r\n",
         URL->pathname,
-        host_value
+        fs->hostname
     );
     url_free(URL);
-    free(host_value);
 
     if (!GET) {
         close(sockfd);
         return neg1(errno);
     }
-    ssize_t sent = send(sockfd, GET, len(GET), 0);
+
+    ssize_t sent = 0;
+    if (fs->is_tls) {
+        sent = SSL_write(fs->ssl, GET, len(GET));
+    } else {
+        sent = send(sockfd, GET, len(GET), 0);
+    }
+
     free(GET);
     if (sent < 0 && errno != EAGAIN) {
         return neg1(errno);
     }
 
-    struct fetch_state *fs = calloc(1, sizeof(struct fetch_state));
     if (!fs) {
         close(sockfd);
         close(fetch_fd);
@@ -444,8 +508,6 @@ static void handle_http_body_bytes(struct fetch_state *st,
             i += to_copy;
             st->current_chunk_size -= to_copy;
 
-            st->total_body_bytes += to_copy;
-
             // If not enough bytes to finish payload, exit now
             if (st->current_chunk_size > 0) {
                 return;
@@ -484,7 +546,7 @@ static bool handle_http_headers(struct fetch_state *st) {
     char buf[4096];
 
     for (;;) {
-        ssize_t n = recv(st->netfd, buf, sizeof(buf), 0);
+        ssize_t n = net_recv(st, buf, sizeof(buf));
 
         if (n > 0) {
             // Append to header buffer
@@ -549,7 +611,7 @@ static bool handle_http_headers(struct fetch_state *st) {
 static void handle_http_body(struct fetch_state *st) {
     char buf[4096];
 
-    ssize_t n = recv(st->netfd, buf, sizeof(buf), 0);
+    ssize_t n = net_recv(st, buf, sizeof(buf));
 
     if (n > 0) {
         // feed raw bytes to chunk/body parser
@@ -661,6 +723,8 @@ static void flush_clarq(struct fetch_state *st) {
     }
 }
 
+
+
 static void *fetcher(void *arg) {
     struct fetch_state *fs = arg;
     struct epoll_event events[4];
@@ -694,6 +758,12 @@ static void *fetcher(void *arg) {
         flush_clarq(fs);
     }
     // cleanup
+    if (fs->is_tls) {
+        SSL_shutdown(fs->ssl);
+        SSL_free(fs->ssl);
+        SSL_CTX_free(fs->ssl_ctx);
+        free(fs->hostname);
+    }
     close(fs->netfd);
     close(fs->outfd);
     close(fs->ep);
