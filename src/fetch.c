@@ -691,7 +691,14 @@ static void flush_clarq(struct fetch_state *st) {
         free(obj);
 
         /* Attempt to send the whole thing */
-        ssize_t n = send(st->outfd, buf, total, 0);
+        ssize_t n = send(st->outfd, buf, total, MSG_NOSIGNAL);
+        if (n < 0) {
+            if (errno == EPIPE || errno == EBADF) {
+                st->http_done = true;
+            }
+            free(buf);
+            return;
+        }
 
         if (n == (ssize_t)total) {
             free(buf);

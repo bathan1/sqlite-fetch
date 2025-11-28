@@ -4,7 +4,7 @@
 SQLITE_EXTENSION_INIT1
 
 // uncomment to remove all debug prints
-// #define NDEBUG
+#define NDEBUG
 #include <assert.h>
 
 #include <yyjson.h>
@@ -541,6 +541,7 @@ static int xBestIndex(sqlite3_vtab *pVTab, sqlite3_index_info *pIdxInfo) {
  * Serves as both xDestroy and xDisconnect for the vtable.
  */
 static int xDisconnect(sqlite3_vtab *pvtab) {
+    println("xDisconnect begin");
     Fetch *vtab = (Fetch *) pvtab;
     for (int i = 0; i < vtab->columns_len; i++) {
         if (vtab->columns[i]) {
@@ -568,6 +569,7 @@ static int xDisconnect(sqlite3_vtab *pvtab) {
 
     sqlite3_free(vtab->schema);
     sqlite3_free(pvtab);
+    println("xDisconnect end");
     return SQLITE_OK;
 }
 
@@ -645,68 +647,6 @@ static int xNext(sqlite3_vtab_cursor *cur0) {
         return SQLITE_OK;
     }
 
-    // // ---------------------------------------------------------
-    // // 2. No queued doc → recv() more bytes until parser yields one
-    // // ---------------------------------------------------------
-    // char buf[4096];
-    //
-    // while (!cur->eof) {
-    //     ssize_t n = recv(cur->sockfd, buf, sizeof(buf), 0);
-    //
-    //     if (n > 0) {
-    //         // Feed into YAJL writer
-    //         fwrite(buf, n, 1, cur->clr->writable);
-    //
-    //         // Did clarinet produce a new JSON object?
-    //         char *doc = clarq_pop(cur->clr);
-    //         if (doc) {
-    //             yyjson_doc *parsed = yyjson_read(doc, strlen(doc), NULL);
-    //             if (!parsed) {
-    //                 cur->base.pVtab->zErrMsg =
-    //                     sqlite3_mprintf("clarinet emitted invalid JSON");
-    //                 return SQLITE_ERROR;
-    //             }
-    //
-    //             // NOW free previous
-    //             yyjson_doc_free(prev);
-    //
-    //             cur->next_doc = parsed;
-    //             cur->count++;
-    //             return SQLITE_OK;
-    //         }
-    //
-    //         // Continue feeding data
-    //         continue;
-    //     }
-    //
-    //     // -------------------------------
-    //     // n <= 0 → EOF or socket closed
-    //     // -------------------------------
-    //     cur->eof = 1;
-    //     println("recv EOF, flushing clarinet");
-    //
-    //     // Flush remaining buffered YAJL output
-    //     fflush(cur->clr->writable);
-    //
-    //     // Let clarinet produce final doc if any
-    //     char *final_doc = clarq_pop(cur->clr);
-    //     if (final_doc) {
-    //         yyjson_doc *parsed = yyjson_read(final_doc, strlen(final_doc), NULL);
-    //
-    //         // free previous
-    //         yyjson_doc_free(prev);
-    //
-    //         cur->next_doc = parsed;
-    //         cur->count++;
-    //         return SQLITE_OK;
-    //     }
-    //
-    //     break; // no more docs, exit loop
-    // }
-
-    // ---------------------------------------------------------
-    // 3. No more rows exist — mark true EOF
-    // ---------------------------------------------------------
     yyjson_doc_free(prev);
     cur->next_doc = NULL; // So xEof knows we're done
     println("xNext end: no more rows");
