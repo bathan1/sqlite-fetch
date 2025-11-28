@@ -124,6 +124,7 @@ int fetch(const char *url, struct fetch_init init) {
     if (!URL) {
         return neg1(errno);
     }
+    fs->hostname = strdup(URL->hostname);
 
     int sv[2] = {0};
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
@@ -168,7 +169,6 @@ int fetch(const char *url, struct fetch_init init) {
         }
 
         SSL_set_fd(fs->ssl, sockfd);
-        fs->hostname = strdup(URL->hostname);
         SSL_set_tlsext_host_name(fs->ssl, fs->hostname);
 
         int err = SSL_connect(fs->ssl);
@@ -762,8 +762,8 @@ static void *fetcher(void *arg) {
         SSL_shutdown(fs->ssl);
         SSL_free(fs->ssl);
         SSL_CTX_free(fs->ssl_ctx);
-        free(fs->hostname);
     }
+    free(fs->hostname);
     close(fs->netfd);
     close(fs->outfd);
     close(fs->ep);

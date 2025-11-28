@@ -154,16 +154,12 @@ typedef struct {
     char *schema;
 } Fetch;
 
-#include "clarinet.h"
-
 /// Cursor
 typedef struct fetch_cursor {
     sqlite3_vtab_cursor base;
     unsigned int count;
     int sockfd;
     int eof;
-
-    clarinet_t *clr;
 
     // Completed row (a fully constructed immutable doc)
     yyjson_doc *next_doc;
@@ -600,9 +596,8 @@ static int xClose(sqlite3_vtab_cursor *cur) {
         if (cursor->next_doc) {
             yyjson_doc_free(cursor->next_doc);
         }
-        if (cursor->clr->count > 0) {
-            clarq_free(cursor->clr);
-            fclose(cursor->clr->writable);
+        if (cursor->sockfd > 0) {
+            close(cursor->sockfd);
         }
         sqlite3_free(cur);
     }
@@ -632,9 +627,10 @@ static int xNext(sqlite3_vtab_cursor *cur0) {
     // ---------------------------------------------------------
     // 1. Try to get next doc immediately from clarinet queue
     // ---------------------------------------------------------
-    char *doc_text = clarq_pop(cur->clr);
+    size_t size = 0;
+    char *doc_text = fetch_pop(cur->sockfd, &size);
     if (doc_text) {
-        yyjson_doc *doc = yyjson_read(doc_text, strlen(doc_text), NULL);
+        yyjson_doc *doc = yyjson_read(doc_text, size, NULL);
         if (!doc) {
             cur->base.pVtab->zErrMsg =
                 sqlite3_mprintf("malformed JSON in clarinet queue");
@@ -649,70 +645,70 @@ static int xNext(sqlite3_vtab_cursor *cur0) {
         return SQLITE_OK;
     }
 
-    // ---------------------------------------------------------
-    // 2. No queued doc → recv() more bytes until parser yields one
-    // ---------------------------------------------------------
-    char buf[4096];
-
-    while (!cur->eof) {
-        ssize_t n = recv(cur->sockfd, buf, sizeof(buf), 0);
-
-        if (n > 0) {
-            // Feed into YAJL writer
-            fwrite(buf, n, 1, cur->clr->writable);
-
-            // Did clarinet produce a new JSON object?
-            char *doc = clarq_pop(cur->clr);
-            if (doc) {
-                yyjson_doc *parsed = yyjson_read(doc, strlen(doc), NULL);
-                if (!parsed) {
-                    cur->base.pVtab->zErrMsg =
-                        sqlite3_mprintf("clarinet emitted invalid JSON");
-                    return SQLITE_ERROR;
-                }
-
-                // NOW free previous
-                yyjson_doc_free(prev);
-
-                cur->next_doc = parsed;
-                cur->count++;
-                return SQLITE_OK;
-            }
-
-            // Continue feeding data
-            continue;
-        }
-
-        // -------------------------------
-        // n <= 0 → EOF or socket closed
-        // -------------------------------
-        cur->eof = 1;
-        println("recv EOF, flushing clarinet");
-
-        // Flush remaining buffered YAJL output
-        fflush(cur->clr->writable);
-
-        // Let clarinet produce final doc if any
-        char *final_doc = clarq_pop(cur->clr);
-        if (final_doc) {
-            yyjson_doc *parsed = yyjson_read(final_doc, strlen(final_doc), NULL);
-
-            // free previous
-            yyjson_doc_free(prev);
-
-            cur->next_doc = parsed;
-            cur->count++;
-            return SQLITE_OK;
-        }
-
-        break; // no more docs, exit loop
-    }
+    // // ---------------------------------------------------------
+    // // 2. No queued doc → recv() more bytes until parser yields one
+    // // ---------------------------------------------------------
+    // char buf[4096];
+    //
+    // while (!cur->eof) {
+    //     ssize_t n = recv(cur->sockfd, buf, sizeof(buf), 0);
+    //
+    //     if (n > 0) {
+    //         // Feed into YAJL writer
+    //         fwrite(buf, n, 1, cur->clr->writable);
+    //
+    //         // Did clarinet produce a new JSON object?
+    //         char *doc = clarq_pop(cur->clr);
+    //         if (doc) {
+    //             yyjson_doc *parsed = yyjson_read(doc, strlen(doc), NULL);
+    //             if (!parsed) {
+    //                 cur->base.pVtab->zErrMsg =
+    //                     sqlite3_mprintf("clarinet emitted invalid JSON");
+    //                 return SQLITE_ERROR;
+    //             }
+    //
+    //             // NOW free previous
+    //             yyjson_doc_free(prev);
+    //
+    //             cur->next_doc = parsed;
+    //             cur->count++;
+    //             return SQLITE_OK;
+    //         }
+    //
+    //         // Continue feeding data
+    //         continue;
+    //     }
+    //
+    //     // -------------------------------
+    //     // n <= 0 → EOF or socket closed
+    //     // -------------------------------
+    //     cur->eof = 1;
+    //     println("recv EOF, flushing clarinet");
+    //
+    //     // Flush remaining buffered YAJL output
+    //     fflush(cur->clr->writable);
+    //
+    //     // Let clarinet produce final doc if any
+    //     char *final_doc = clarq_pop(cur->clr);
+    //     if (final_doc) {
+    //         yyjson_doc *parsed = yyjson_read(final_doc, strlen(final_doc), NULL);
+    //
+    //         // free previous
+    //         yyjson_doc_free(prev);
+    //
+    //         cur->next_doc = parsed;
+    //         cur->count++;
+    //         return SQLITE_OK;
+    //     }
+    //
+    //     break; // no more docs, exit loop
+    // }
 
     // ---------------------------------------------------------
     // 3. No more rows exist — mark true EOF
     // ---------------------------------------------------------
     yyjson_doc_free(prev);
-    cur->next_doc = NULL;   // <- xEof() will detect this
+    cur->next_doc = NULL; // So xEof knows we're done
     println("xNext end: no more rows");
 
     return SQLITE_OK;
@@ -824,7 +820,6 @@ static int xColumn(sqlite3_vtab_cursor *pcursor,
 
 static int xEof(sqlite3_vtab_cursor *cur) {
     fetch_cursor_t *c = (fetch_cursor_t*)cur;
-    println("xEof start, clarinet queue size is (%zu)", c->clr->count);
     int rc = c->next_doc == NULL;
     println("xEof end %s", rc == 1 ? "true" : "false");
     return rc;
@@ -835,7 +830,6 @@ static int xRowid(sqlite3_vtab_cursor *pcursor, sqlite3_int64 *prowid) {
     *prowid = ((fetch_cursor_t *)pcursor)->count;
     return SQLITE_OK;
 }
-
 
 static int xFilter(sqlite3_vtab_cursor *cur0,
                     int idxNum, const char *idxStr,
@@ -864,7 +858,7 @@ static int xFilter(sqlite3_vtab_cursor *cur0,
     char *url = remove_all(argurl, &sz, '\'');
     if (!url) url = strdup(vtab->default_url);
 
-    Cur->sockfd = fetch(url);
+    Cur->sockfd = fetch(url, (fetch_init_t) {0});
     free(url);
 
     if (Cur->sockfd < 0) {
@@ -874,31 +868,14 @@ static int xFilter(sqlite3_vtab_cursor *cur0,
         return SQLITE_ERROR;
     }
 
-    Cur->clr = use_clarinet();
-    if (!Cur->clr) {
+    size_t first_length = 0;
+    char *popped = fetch_pop(Cur->sockfd, &first_length);
+    if (!popped) {
         cur0->pVtab->zErrMsg =
-            sqlite3_mprintf("fetch: couldn't create clarinet parser");
-        Cur->eof = 1;
-        return SQLITE_NOMEM;
-    }
-
-    char buf[4096];
-    ssize_t n;
-
-    while (Cur->clr->count == 0 &&
-       (n = recv(Cur->sockfd, buf, sizeof(buf), 0)) > 0)
-    {
-        fwrite(buf, n, sizeof(char), Cur->clr->writable);
-    }
-
-    if (Cur->clr->count == 0) {
-        Cur->eof = 1;
-        cur0->pVtab->zErrMsg =
-            sqlite3_mprintf("fetch: could not recv() any json bytes\n");
+            sqlite3_mprintf("fetch: empty body\n");
         return SQLITE_ERROR;
     }
-    char *popped = clarq_pop(Cur->clr);
-    yyjson_doc *doc = yyjson_read(popped, strlen(popped), 0);
+    yyjson_doc *doc = yyjson_read(popped, first_length, 0);
     Cur->next_doc = doc;
 
     println("xFilter end");
