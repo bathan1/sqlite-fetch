@@ -50,7 +50,7 @@ struct fetch_state {
 /**
  * Taken from Web API URL, word 4 word, bar 4 bar.
  */
-struct url_s {
+struct url {
     /**
      * A string containing the domain of the URL.
      *
@@ -74,38 +74,15 @@ struct url_s {
     buffer *port;
 };
 
-/** Alias for {@link struct url_s} */
-typedef struct url_s url_t;
-static char *host(url_t *url);
+static char *host(struct url *url);
 
-static int url_free(struct url_s *url);
-static int tcp_getaddrinfo(struct url_s *url, struct addrinfo **wout);
+static int url_free(struct url *url);
+static int tcp_getaddrinfo(struct url *url, struct addrinfo **wout);
 static int try_socket(struct addrinfo *addrinfo);
 static int try_connect(int sockfd, struct addrinfo *addrinfo);
 static int try_send(int sockfd, char *buffer, size_t length, int flags);
 
-// Read exactly N bytes, pulling from leftover buffer first.
-static ssize_t read_exact(int fd, char **bufp, size_t *buflen,
-                          char *out, size_t want);
-
-// Read a CRLF-terminated ASCII line (no CRLF in result)
-static bool read_line(int netfd,
-                     char **bufp, size_t *buflen,
-                     char *out, size_t outcap);
-
-static int read_crlf(int netfd, char **bufp, size_t *buflen);
-// Decode chunked body and forward
-static int forward_chunked(int netfd, int outfd,
-                           char **bufp, size_t *buflen);
-// Content-Length forwarding
-static int forward_content_length(int netfd, int outfd,
-                                  char **bufp, size_t *buflen,
-                                  size_t content_len);
-// Fallback: read until EOF
-static int forward_until_close(int netfd, int outfd,
-                               char **bufp, size_t *buflen);
-static int parse_headers_and_forward(int netfd, int outfd);
-static struct url_s *parse_url(const char *url);
+static struct url *parse_url(const char *url);
 
 // fcntl flat setting boilerplate
 static void set_nonblocking(int fd) {
@@ -125,7 +102,7 @@ static void flush_json_queue(struct fetch_state *st);
 static void *fetch_worker_thread(void *arg); 
 
 int fetch(const char *url) {
-    struct url_s *URL = parse_url(url);
+    struct url *URL = parse_url(url);
     if (!URL) {
         return neg1(errno);
     }
@@ -220,17 +197,11 @@ int fetch(const char *url) {
     // detach so it cleans up after finishing
     pthread_detach(tid);
 
-
-    // parse_headers_and_forward(sockfd, fetch_fd);
-    //
-    // close(sockfd);
-    // close(fetch_fd);
-    //
     return app_fd;
 }
 
 
-static char *host(url_t *url) {
+static char *host(struct url *url) {
     if (!url || !url->hostname) { return null(EINVAL); }
 
     if (url->port) {
@@ -240,7 +211,7 @@ static char *host(url_t *url) {
     return strdup(url->hostname);
 }
 
-static int url_free(struct url_s *url) {
+static int url_free(struct url *url) {
     int count = 0;
     if (!url) {
         return count;
@@ -261,7 +232,7 @@ static int url_free(struct url_s *url) {
 }
 
 static int tcp_getaddrinfo(
-    struct url_s *url,
+    struct url *url,
     struct addrinfo **wout
 ) {
     if (!url || !wout) {
@@ -313,234 +284,7 @@ static int try_send(int sockfd, char *buffer, size_t length, int flags) {
     return sent;
 } 
 
-// Read exactly N bytes, pulling from leftover buffer first.
-static ssize_t read_exact(int fd, char **bufp, size_t *buflen,
-                          char *out, size_t want)
-{
-    size_t pos = 0;
-
-    /* Consume leftover first */
-    while (*buflen > 0 && pos < want) {
-        out[pos++] = **bufp;
-        (*bufp)++;
-        (*buflen)--;
-    }
-
-    while (pos < want) {
-        ssize_t n = recv(fd, out + pos, want - pos, 0);
-        if (n <= 0) return -1;
-        pos += n;
-    }
-
-    return pos;
-}
-
-// Read a CRLF-terminated ASCII line (no CRLF in result)
-static bool read_line(int fd, char **bufp, size_t *buflen,
-                      char *out, size_t outcap)
-{
-    size_t pos = 0;
-
-    for (;;) {
-        /* First use leftover buffer if any */
-        while (*buflen > 0) {
-            char c = **bufp;
-
-            (*bufp)++;
-            (*buflen)--;
-
-            if (pos + 1 < outcap)
-                out[pos++] = c;
-
-            if (c == '\n') {       // found end of line
-                out[pos] = '\0';
-                return true;
-            }
-        }
-
-        /* Need to read more */
-        char tmp[4096];
-        ssize_t n = recv(fd, tmp, sizeof(tmp), 0);
-        if (n <= 0) return false;
-
-        *bufp = malloc(n);
-        memcpy(*bufp, tmp, n);
-        *buflen = n;
-    }
-}
-
-static int read_crlf(int netfd, char **bufp, size_t *buflen)
-{
-    char tmp[2];
-    return read_exact(netfd, bufp, buflen, tmp, 2) == 2;
-}
-
-// Decode chunked body and forward
-static int forward_chunked(int netfd, int outfd,
-                           char **bufp, size_t *buflen)
-{
-    clarinet_t *clare = use_clarinet();
-
-    for (;;) {
-        char line[64];
-        if (!read_line(netfd, bufp, buflen, line, sizeof line))
-            return -1;
-
-        size_t chunk_size = strtoul(line, NULL, 16);
-
-        if (chunk_size == 0) {
-            read_crlf(netfd, bufp, buflen);
-
-            // Flush remaining objects
-            while (clare->count > 0) {
-                fflush(clare->writable);
-                char *obj = cqpop(clare);
-                uint64_t len = strlen(obj);
-
-                send(outfd, &len, sizeof len, 0);
-                send(outfd, obj, len, 0);
-
-                free(obj);
-            }
-
-            cqfree(clare);
-            return 0;
-        }
-
-        // Read chunk payload
-        while (chunk_size > 0) {
-            char buf[4096];
-            size_t to_read = chunk_size < sizeof buf ? chunk_size : sizeof buf;
-
-            ssize_t n = read_exact(netfd, bufp, buflen, buf, to_read);
-            if (n <= 0) return -1;
-
-            chunk_size -= n;
-
-            // Feed bytes into clarinet's FILE*
-            fwrite(buf, n, 1, clare->writable);
-            fflush(clare->writable);
-            printf("clare size %lu\n", clare->count);
-        }
-
-        size_t i = 0;
-        // Flush any COMPLETED JSON objects
-        while (clare->count > 0) {
-            printf("spin %lu, count %lu\n", ++i, clare->count);
-            char *obj = cqpop(clare);
-            uint64_t len = strlen(obj);
-            send(outfd, &len, sizeof(len), 0);
-            send(outfd, obj, len, 0);
-            free(obj);
-        }
-
-        if (!read_crlf(netfd, bufp, buflen))
-            return -1;
-    }
-}
-
-// Content-Length forwarding
-static int forward_content_length(int netfd, int outfd,
-                                  char **bufp, size_t *buflen,
-                                  size_t content_len)
-{
-    // First, consume leftover bytes
-    if (*buflen > 0) {
-        size_t to_take = (*buflen < content_len) ? *buflen : content_len;
-        send(outfd, *bufp, to_take, 0);
-        *bufp += to_take;
-        *buflen -= to_take;
-        content_len -= to_take;
-    }
-
-    // Then read from network
-    char buf[4096];
-    while (content_len > 0) {
-        size_t to_read = content_len < sizeof buf ? content_len : sizeof buf;
-
-        ssize_t n = recv(netfd, buf, to_read, 0);
-        if (n <= 0) return -1;
-
-        send(outfd, buf, n, 0);
-        content_len -= n;
-    }
-
-    return 0;
-}
-
-// Fallback: read until EOF
-static int forward_until_close(int netfd, int outfd,
-                               char **bufp, size_t *buflen)
-{
-    if (*buflen > 0) {
-        send(outfd, *bufp, *buflen, 0);
-        *bufp = NULL;
-        *buflen = 0;
-    }
-    char buf[4096];
-    ssize_t n;
-    while ((n = recv(netfd, buf, sizeof buf, 0)) > 0) {
-        send(outfd, buf, n, 0);
-    }
-    return 0;
-}
-
-static int parse_headers_and_forward(int netfd, int outfd)
-{
-    char hdrbuf[8192];
-    size_t hdrlen = 0;
-
-    for (;;) {
-        ssize_t n = recv(netfd, hdrbuf + hdrlen, sizeof(hdrbuf) - hdrlen, 0);
-        if (n <= 0) return -1;
-        hdrlen += n;
-
-        char *p = memmem(hdrbuf, hdrlen, "\r\n\r\n", 4);
-        if (p) {
-            size_t header_length = (p - hdrbuf) + 4;
-
-            size_t body_left = hdrlen - header_length;
-            char *body_ptr = hdrbuf + header_length;
-
-            bool is_chunked = false;
-            size_t content_len = 0;
-
-            char *headers = malloc(header_length + 1);
-            memcpy(headers, hdrbuf, header_length);
-            headers[header_length] = 0;
-
-            if (strcasestr(headers, "transfer-encoding: chunked"))
-                is_chunked = true;
-
-            char *cl = strcasestr(headers, "content-length:");
-            if (cl) content_len = strtoul(cl + 15, NULL, 10);
-
-            free(headers);
-
-            if (is_chunked) {
-                return forward_chunked(netfd, outfd, &body_ptr, &body_left);
-            }
-
-            if (content_len > 0) {
-                return forward_content_length(netfd, outfd, &body_ptr, &body_left, content_len);
-            }
-
-            return forward_until_close(netfd, outfd, &body_ptr, &body_left);
-        }
-    }
-}
-
-
-static struct url_s *url_free_error(struct url_s *u) {
-    if (!u) return NULL;
-    if (u->hostname)     free(u->hostname);
-    if (u->pathname) free(u->pathname);
-    if (u->port)     free(u->port);
-    free(u);
-    return NULL;
-}
-
-static struct url_s *parse_url(const char *url) {
+static struct url *parse_url(const char *url) {
     CURLU *u = curl_url();
     if (!u) {
         errno = ENOMEM;
@@ -548,7 +292,7 @@ static struct url_s *parse_url(const char *url) {
     }
 
     curl_url_set(u, CURLUPART_URL, url, 0);
-    struct url_s *URL = calloc(1, sizeof(struct url_s));
+    struct url *URL = calloc(1, sizeof(struct url));
     if (!URL) {
         curl_url_cleanup(u);
         errno = ENOMEM;
@@ -769,6 +513,7 @@ static void handle_http_body(struct fetch_state *st) {
     char buf[4096];
 
     ssize_t n = recv(st->netfd, buf, sizeof(buf), 0);
+    fwrite(buf, sizeof(buf), 1, stdout);
 
     if (n > 0) {
         // feed raw bytes to chunk/body parser
@@ -891,7 +636,6 @@ static void flush_json_queue(struct fetch_state *st) {
 
 static void *fetch_worker_thread(void *arg) {
     struct fetch_state *fs = arg;
-
     struct epoll_event events[4];
 
     while (!fs->http_done) {

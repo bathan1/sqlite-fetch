@@ -35,7 +35,7 @@ int main() {
         if (m <= 0) { free(obj); break; }
 
         obj[len] = 0;
-        printf("%s\n", obj);
+        // printf("%s\n", obj);
 
         free(obj);
     }
