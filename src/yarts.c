@@ -601,7 +601,7 @@ static int xClose(sqlite3_vtab_cursor *cur) {
             yyjson_doc_free(cursor->next_doc);
         }
         if (cursor->clr->count > 0) {
-            clarinet_free(cursor->clr);
+            cqfree(cursor->clr);
             fclose(cursor->clr->writable);
         }
         sqlite3_free(cur);
@@ -632,7 +632,7 @@ static int xNext(sqlite3_vtab_cursor *cur0) {
     // ---------------------------------------------------------
     // 1. Try to get next doc immediately from clarinet queue
     // ---------------------------------------------------------
-    char *doc_text = clarinet_pop(cur->clr);
+    char *doc_text = cqpop(cur->clr);
     if (doc_text) {
         yyjson_doc *doc = yyjson_read(doc_text, strlen(doc_text), NULL);
         if (!doc) {
@@ -662,7 +662,7 @@ static int xNext(sqlite3_vtab_cursor *cur0) {
             fwrite(buf, n, 1, cur->clr->writable);
 
             // Did clarinet produce a new JSON object?
-            char *doc = clarinet_pop(cur->clr);
+            char *doc = cqpop(cur->clr);
             if (doc) {
                 yyjson_doc *parsed = yyjson_read(doc, strlen(doc), NULL);
                 if (!parsed) {
@@ -693,7 +693,7 @@ static int xNext(sqlite3_vtab_cursor *cur0) {
         fflush(cur->clr->writable);
 
         // Let clarinet produce final doc if any
-        char *final_doc = clarinet_pop(cur->clr);
+        char *final_doc = cqpop(cur->clr);
         if (final_doc) {
             yyjson_doc *parsed = yyjson_read(final_doc, strlen(final_doc), NULL);
 
@@ -897,7 +897,7 @@ static int xFilter(sqlite3_vtab_cursor *cur0,
             sqlite3_mprintf("fetch: could not recv() any json bytes\n");
         return SQLITE_ERROR;
     }
-    char *popped = clarinet_pop(Cur->clr);
+    char *popped = cqpop(Cur->clr);
     yyjson_doc *doc = yyjson_read(popped, strlen(popped), 0);
     Cur->next_doc = doc;
 

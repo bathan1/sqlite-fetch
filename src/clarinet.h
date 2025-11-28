@@ -43,5 +43,5 @@ struct clarinet_state {
 typedef struct clarinet_state clarinet_state_t;
 
 struct clarinet *use_clarinet();
-void clarinet_free(struct clarinet *q);
-char *clarinet_pop(struct clarinet *q);
+void cqfree(struct clarinet *q);
+char *cqpop(struct clarinet *q);
