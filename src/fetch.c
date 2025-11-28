@@ -117,170 +117,12 @@ static bool handle_http_headers(struct fetch_state *st);
 static void handle_http_body_bytes(struct fetch_state *st,
                                    const char *data,
                                    size_t len);
-static void handle_http_body(struct fetch_state *st) {
-    char buf[4096];
+static void handle_http_body(struct fetch_state *st);
 
-    ssize_t n = recv(st->netfd, buf, sizeof(buf), 0);
+static bool flush_pending(struct fetch_state *st);
+static void flush_json_queue(struct fetch_state *st);
 
-    if (n > 0) {
-        // feed raw bytes to chunk/body parser
-        handle_http_body_bytes(st, buf, (size_t)n);
-        return;
-    }
-
-    if (n == 0) {
-        // TCP closed — if chunked, this could be abrupt
-        st->http_done = true;
-        return;
-    }
-
-    // n < 0: check errno
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        // no data right now — epoll will tell us later
-        return;
-    }
-
-    // real error
-    st->http_done = true;
-}
-
-static bool flush_pending(struct fetch_state *st) {
-    while (st->pending_len > 0) {
-        ssize_t n = send(st->outfd,
-                         st->pending_send + st->pending_off,
-                         st->pending_len,
-                         0);
-
-        if (n > 0) {
-            st->pending_off += (size_t)n;
-            st->pending_len -= (size_t)n;
-        }
-        else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            return false; // still pending
-        }
-        else {
-            // real error — stop producing
-            st->http_done = true;
-            return false;
-        }
-    }
-
-    // pending complete: free and reset
-    free(st->pending_send);
-    st->pending_send = NULL;
-    st->pending_off = 0;
-    st->pending_len = 0;
-
-    return true; // pending fully flushed
-}
-
-static void flush_json_queue(struct fetch_state *st) {
-    /* 1. First, flush any partially-sent object. */
-    if (st->pending_len > 0) {
-        if (!flush_pending(st))
-            return;  // still blocked
-    }
-
-    /* 2. Now flush new items from Clarinet's queue */
-    while (st->clare->count > 0) {
-        char *obj = cqpop(st->clare);
-        size_t len = strlen(obj);
-
-        /* Build the wire format: [8-byte length][json bytes] */
-        size_t total = 8 + len;
-        char *buf = malloc(total);
-        if (!buf) {
-            free(obj);
-            st->http_done = true;
-            return;
-        }
-
-        uint64_t n64 = len;
-        memcpy(buf, &n64, 8);
-        memcpy(buf + 8, obj, len);
-        free(obj);
-
-        /* Attempt to send the whole thing */
-        ssize_t n = send(st->outfd, buf, total, 0);
-
-        if (n == (ssize_t)total) {
-            free(buf);
-            continue; // go to next object
-        }
-
-        if (n >= 0) {
-            /* Partial write → store remainder */
-            st->pending_send = buf;
-            st->pending_off = (size_t)n;
-            st->pending_len = total - (size_t)n;
-            return;
-        }
-
-        /* send() returned -1 */
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            st->pending_send = buf;
-            st->pending_off = 0;
-            st->pending_len = total;
-            return;
-        }
-
-        /* real error */
-        free(buf);
-        st->http_done = true;
-        return;
-    }
-
-    /* 3. If parser is done AND no queue items AND no pending sends → close */
-    if (st->http_done &&
-        st->clare->count == 0 &&
-        st->pending_len == 0 &&
-        !st->closed_outfd) {
-
-        close(st->outfd);
-        st->closed_outfd = true;
-    }
-}
-
-static void *fetch_worker_thread(void *arg) {
-    struct fetch_state *fs = arg;
-
-    struct epoll_event events[4];
-
-    while (!fs->http_done) {
-        int n = epoll_wait(fs->ep, events, 4, -1);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            break;
-        }
-
-        for (int i = 0; i < n; i++) {
-            int fd = events[i].data.fd;
-            uint32_t ev = events[i].events;
-
-            if (fd == fs->netfd && (ev & EPOLLIN)) {
-                if (!fs->headers_done)
-                    handle_http_headers(fs);
-                else
-                    handle_http_body(fs);
-            }
-
-            if (fd == fs->outfd && (ev & EPOLLOUT)) {
-                flush_json_queue(fs);
-            }
-        }
-    }
-
-    // cleanup
-    close(fs->netfd);
-    close(fs->outfd);
-    close(fs->ep);
-
-    cqfree(fs->clare);
-    free(fs);
-
-    return NULL;
-}
-
+static void *fetch_worker_thread(void *arg); 
 
 int fetch(const char *url) {
     struct url_s *URL = parse_url(url);
@@ -921,4 +763,168 @@ static bool handle_http_headers(struct fetch_state *st) {
             return false;
         }
     }
+}
+
+static void handle_http_body(struct fetch_state *st) {
+    char buf[4096];
+
+    ssize_t n = recv(st->netfd, buf, sizeof(buf), 0);
+
+    if (n > 0) {
+        // feed raw bytes to chunk/body parser
+        handle_http_body_bytes(st, buf, (size_t)n);
+        return;
+    }
+
+    if (n == 0) {
+        // TCP closed — if chunked, this could be abrupt
+        st->http_done = true;
+        return;
+    }
+
+    // n < 0: check errno
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        // no data right now — epoll will tell us later
+        return;
+    }
+
+    // real error
+    st->http_done = true;
+}
+
+static bool flush_pending(struct fetch_state *st) {
+    while (st->pending_len > 0) {
+        ssize_t n = send(st->outfd,
+                         st->pending_send + st->pending_off,
+                         st->pending_len,
+                         0);
+
+        if (n > 0) {
+            st->pending_off += (size_t)n;
+            st->pending_len -= (size_t)n;
+        }
+        else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return false; // still pending
+        }
+        else {
+            // real error — stop producing
+            st->http_done = true;
+            return false;
+        }
+    }
+
+    // pending complete: free and reset
+    free(st->pending_send);
+    st->pending_send = NULL;
+    st->pending_off = 0;
+    st->pending_len = 0;
+
+    return true; // pending fully flushed
+}
+
+static void flush_json_queue(struct fetch_state *st) {
+    /* 1. First, flush any partially-sent object. */
+    if (st->pending_len > 0) {
+        if (!flush_pending(st))
+            return;  // still blocked
+    }
+
+    /* 2. Now flush new items from Clarinet's queue */
+    while (st->clare->count > 0) {
+        char *obj = cqpop(st->clare);
+        size_t len = strlen(obj);
+
+        /* Build the wire format: [8-byte length][json bytes] */
+        size_t total = 8 + len;
+        char *buf = malloc(total);
+        if (!buf) {
+            free(obj);
+            st->http_done = true;
+            return;
+        }
+
+        uint64_t n64 = len;
+        memcpy(buf, &n64, 8);
+        memcpy(buf + 8, obj, len);
+        free(obj);
+
+        /* Attempt to send the whole thing */
+        ssize_t n = send(st->outfd, buf, total, 0);
+
+        if (n == (ssize_t)total) {
+            free(buf);
+            continue; // go to next object
+        }
+
+        if (n >= 0) {
+            /* Partial write → store remainder */
+            st->pending_send = buf;
+            st->pending_off = (size_t)n;
+            st->pending_len = total - (size_t)n;
+            return;
+        }
+
+        /* send() returned -1 */
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            st->pending_send = buf;
+            st->pending_off = 0;
+            st->pending_len = total;
+            return;
+        }
+
+        /* real error */
+        free(buf);
+        st->http_done = true;
+        return;
+    }
+
+    /* 3. If parser is done AND no queue items AND no pending sends → close */
+    if (st->http_done &&
+        st->clare->count == 0 &&
+        st->pending_len == 0 &&
+        !st->closed_outfd) {
+
+        close(st->outfd);
+        st->closed_outfd = true;
+    }
+}
+
+static void *fetch_worker_thread(void *arg) {
+    struct fetch_state *fs = arg;
+
+    struct epoll_event events[4];
+
+    while (!fs->http_done) {
+        int n = epoll_wait(fs->ep, events, 4, -1);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+
+        for (int i = 0; i < n; i++) {
+            int fd = events[i].data.fd;
+            uint32_t ev = events[i].events;
+
+            if (fd == fs->netfd && (ev & EPOLLIN)) {
+                if (!fs->headers_done)
+                    handle_http_headers(fs);
+                else
+                    handle_http_body(fs);
+            }
+
+            if (fd == fs->outfd && (ev & EPOLLOUT)) {
+                flush_json_queue(fs);
+            }
+        }
+    }
+
+    // cleanup
+    close(fs->netfd);
+    close(fs->outfd);
+    close(fs->ep);
+
+    cqfree(fs->clare);
+    free(fs);
+
+    return NULL;
 }
