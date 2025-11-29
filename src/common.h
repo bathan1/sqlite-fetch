@@ -1,6 +1,5 @@
-/** @defgroup common_h YARTS utilities.
+/** @file common.h YARTS utilities.
  *  @brief General convenience functions for the other modules
- *  @{
  */
 #pragma once
 

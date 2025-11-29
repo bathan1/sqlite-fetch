@@ -250,7 +250,7 @@ int fetch(const char *url, struct fetch_init init) {
     fs->chunk_line_len = 0;
 
     // Initialize clarinet
-    fs->bass = use_bass();
+    fs->bass = bass();
     setvbuf(fs->bass->writable, NULL, _IONBF, 0);
     fs->http_done = false;
 

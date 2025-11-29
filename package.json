@@ -65,6 +65,7 @@
         "xhr2": "^0.2.1"
     },
     "dependencies": {
+        "@jothepro/doxygen-awesome-css": "github:jothepro/doxygen-awesome-css#v2.4.1",
         "esm-env": "^1.2.2",
         "eventemitter3": "^5.0.1",
         "execa": "^9.6.0",

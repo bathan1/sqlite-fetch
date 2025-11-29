@@ -1,6 +1,5 @@
-/** @defgroup fetch_h Fetch in C
- *  @brief Simplified web fetch implementation that wraps tcp socket code.
- *  @{
+/** @file fetch.h Fetch
+ *  @brief Simplified Web Fetch implementation that wraps tcp socket code.
  */
 
 #pragma once
@@ -172,5 +171,3 @@ static char **split(const char *str, char delim, int *out_count, int *lens) {
     if (out_count) *out_count = idx;
     return result;
 }
-
-/** @} */   // end of fetch_h group

@@ -1,6 +1,5 @@
-/** @defgroup bassoon_h Bassoon JSON Queue
+/** @file bassoon.h Bassoon JSON Queue
  *  @brief A JSON deque wrapper over byte streams.
- *  @{
  */
 #pragma once
 
@@ -34,12 +33,10 @@ struct bassoon {
 };
 
 /** Dynamically allocate a bassoon queue. */
-struct bassoon *use_bass();
+struct bassoon *bass();
 
 /** Free the queue buffer at BASS. */
 void bass_free(struct bassoon *bass);
 
 /** Pop an object from the queue in BASS, or NULL if it's empty. */
 char *bass_pop(struct bassoon *bass);
-
-/** @} */   // end of bassoon.h group
