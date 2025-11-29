@@ -1,46 +1,10 @@
 {
-    "name": "sqlite-fetch",
+    "name": "yarts",
     "version": "0.9.8",
     "type": "module",
-    "description": "web apis on sqlite",
+    "description": "yet another runtime tcp stream for sqlite",
     "scripts": {
-        "cmake:dynamic": "rm -rf build && mkdir build && cd build && cmake .. && make fetch",
-        "cmake:static": "rm -rf build && mkdir build && cd build && cmake .. -DTHIRDPARTY_STATIC=ON && make fetch",
-        "cmake:ext": "rm -rf build && mkdir build && cd build && cmake .. -DBUILD_FETCH=OFF -DBUILD_EXT=ON && make",
-        "test:chrome": "vitest --project web --browser=chromium",
-        "test:firefox": "vitest --project web --browser=firefox",
-        "test:native": "vitest --project native",
-        "sanity-check": "python3 tests/test_sanity_check.py",
-        "build": "rm -rf dist && npx concurrently \"npx vite build\" \"npx tsc -p tsconfig.build.json && npx tsc-alias -p tsconfig.build.json\"",
-        "postbuild": "pnpm run cmake:ext && cp build/*.so dist/",
-        "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,json,css,scss,md}\"",
-        "predocs": "typedoc",
-        "docs:dev": "vitepress dev docs",
-        "docs:build": "vitepress build docs && cp _headers ./docs/.vitepress/dist",
-        "docs:preview": "vitepress preview docs",
-        "ts-node": "node --loader ts-node/esm"
-    },
-    "exports": {
-        ".": {
-            "types": "./dist/index.d.ts",
-            "import": "./dist/index.js",
-            "default": "./dist/index.js"
-        },
-        "./wasm.js": {
-            "types": "./dist/wasm.d.ts",
-            "node": "./dist/wasm.node.js",
-            "import": "./dist/wasm.js",
-            "default": "./dist/wasm.js"
-        }
-    },
-    "files": [
-        "dist",
-        "tsconfig.json",
-        "bin",
-        "README.md"
-    ],
-    "bin": {
-        "sqlite-fetch": "./bin/cli.mjs"
+        "test": "vitest tests"
     },
     "keywords": [],
     "author": "bathan1",

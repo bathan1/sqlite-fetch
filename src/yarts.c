@@ -500,7 +500,7 @@ static int check_plan_mask(struct sqlite3_index_info *index_info,
         Fetch *vtab = (void *) pVtab;
         if (!vtab->default_url || vtab->default_url_len == 0) {
             pVtab->zErrMsg = sqlite3_mprintf(
-                "yarts> Fetch needs a url = in the WHERE clause if no default url is set.\n");
+                "fetch SELECT needs a `WHERE url = 'something'` clause when no default url is set.\n");
             return SQLITE_ERROR;
         }
     }
