@@ -4,7 +4,8 @@
     "type": "module",
     "description": "yet another runtime tcp stream for sqlite",
     "scripts": {
-        "test": "vitest tests"
+        "test": "vitest tests",
+        "moxygen": "moxygen --anchors --groups --output=website/docs/api/%s.md xml"
     },
     "keywords": [],
     "author": "bathan1",

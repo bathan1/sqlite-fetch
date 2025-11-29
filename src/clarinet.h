@@ -20,7 +20,7 @@
  * Reads are constant-time from both its head and its tail,
  * so it's technically a "deque".
  */
-typedef struct clarinet {
+struct clarinet {
     /**
      * Underlying buffer that #clarinet will free via #clarinet_free.
      */
@@ -50,19 +50,27 @@ typedef struct clarinet {
      * Plain writable "stream" of the queue so you can just #fwrite bytes to the queue.
      */
     FILE *writable;
-} clarinet_t;
+};
+
+/** 
+ * @ingroup types
+ */
+typedef struct clarinet clarinet_t;
 
 /**
+ * @ingroup functions
  * Allocate a clarinet handle on the heap.
  */
-struct clarinet *use_clarinet();
+clarinet_t *use_clarinet();
 
 /**
+ * @ingroup functions
  * Free the clarinet buffer at CLARE.
  */
-void clarinet_free(struct clarinet *clare);
+void clarinet_free(clarinet_t *clare);
 
 /**
+ * @ingroup functions
  * Pop an object from the queue in CLARE, or NULL if it's empty.
  */
-char *clarinet_pop(struct clarinet *clare);
+char *clarinet_pop(clarinet_t *clare);
