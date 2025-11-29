@@ -12,7 +12,11 @@
 # clang
 .cache
 *.so
-*.so
+*.o
 
 # python
 **/__pycache__
+
+# doxygen
+/latex/
+/html/

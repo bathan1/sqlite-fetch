@@ -1,14 +1,35 @@
 #define _GNU_SOURCE
+#include <yyjson.h>
+#include <yajl/yajl_parse.h>
 #include "common.h"
 #include "clarinet.h"
 
 #define peek(cur, field) (cur->field[cur->current_depth - 1])
 #define push(cur, field, value) ((cur->field[cur->current_depth]) = value)
 
+struct clarinet_state {
+    unsigned int current_depth;
+    unsigned int depth;
+    struct clarinet *queue;
+
+    // clarinet frees everything from here
+    char **keys;
+    size_t keys_size;
+    size_t keys_cap;
+    // key stack
+    char *key[MAX_DEPTH];
+    yyjson_mut_doc *doc_root;
+    // object node stack
+    yyjson_mut_val *object[MAX_DEPTH];
+
+    unsigned int pp_flags;
+};
+typedef struct clarinet_state clarinet_state_t;
+
 static void queue_init(struct clarinet *q) {
     q->cap = 8;
-    q->handle = calloc(q->cap, sizeof(char *));
-    q->head = q->tail = q->count = 0;
+    q->buffer = calloc(q->cap, sizeof(char *));
+    q->hd = q->tl = q->count = 0;
 }
 
 static void queue_push(struct clarinet *q, char *val) {
@@ -22,20 +43,20 @@ static void queue_push(struct clarinet *q, char *val) {
         // copy linearized existing content into new buffer
         // in order (head ... oldcap-1, 0 ... head-1)
         for (size_t i = 0; i < q->count; i++) {
-            size_t idx = (q->head + i) % oldcap;
-            newbuf[i] = q->handle[idx];
+            size_t idx = (q->hd + i) % oldcap;
+            newbuf[i] = q->buffer[idx];
         }
 
-        free(q->handle);
-        q->handle = newbuf;
+        free(q->buffer);
+        q->buffer = newbuf;
 
-        q->head = 0;
-        q->tail = q->count;
+        q->hd = 0;
+        q->tl = q->count;
         q->cap  = newcap;
     }
 
-    q->handle[q->tail] = val;
-    q->tail = (q->tail + 1) % q->cap;
+    q->buffer[q->tl] = val;
+    q->tl = (q->tl + 1) % q->cap;
     q->count++;
 }
 
@@ -79,7 +100,6 @@ static int handle_int(void *ctx, long long i) {
 static int handle_double(void *ctx, double d) {
     return 1;
 }
-
 
 static int handle_number(void *ctx, const char *num, size_t len) {
     clarinet_state_t *cur = ctx;
@@ -254,7 +274,7 @@ static ssize_t ccookie_read(void *cookie, char *buf, size_t size) {
     ccookie_t *c = cookie;
     clarinet_state_t *st = (clarinet_state_t *) (c->state);
 
-    char *json = clarq_pop(st->queue);
+    char *json = clarinet_pop(st->queue);
     if (!json) return 0;
 
     size_t len = strlen(json);
@@ -298,14 +318,14 @@ static int ccookie_free(void *cookie) {
 static FILE *ccookie_open(struct clarinet_state *init) {
     ccookie_t *cookie = malloc(sizeof *cookie);
     if (!cookie) {
-        clarq_free(init->queue);
+        clarinet_free(init->queue);
         free(init->keys);
         free(init);
         return NULL;
     }
     yajl_handle parser = yajl_alloc(&callbacks, NULL, (void *) init);
     if (!parser) {
-        clarq_free(init->queue);
+        clarinet_free(init->queue);
         free(init->keys);
         free(init);
         return NULL;
@@ -324,27 +344,27 @@ static FILE *ccookie_open(struct clarinet_state *init) {
     return fopencookie(cookie, "r+", io);
 }
 
-void clarq_free(struct clarinet *q) {
-    if (!q || !q->handle) return;
+void clarinet_free(struct clarinet *q) {
+    if (!q || !q->buffer) return;
 
     for (size_t i = 0; i < q->count; i++) {
-        size_t idx = (q->head + i) % q->cap;
+        size_t idx = (q->hd + i) % q->cap;
 
-        if (q->handle[idx])
-            free(q->handle[idx]);
+        if (q->buffer[idx])
+            free(q->buffer[idx]);
     }
 
-    free(q->handle);
+    free(q->buffer);
     free(q);
 }
 
-char *clarq_pop(struct clarinet *q) {
+char *clarinet_pop(struct clarinet *q) {
     if (q->count == 0)
         return NULL;
 
-    char *val = q->handle[q->head];
-    q->handle[q->head] = 0;
-    q->head = (q->head + 1) % q->cap;
+    char *val = q->buffer[q->hd];
+    q->buffer[q->hd] = 0;
+    q->hd = (q->hd + 1) % q->cap;
     q->count--;
 
     return val;
@@ -363,7 +383,7 @@ struct clarinet *use_clarinet() {
     FILE *writable = ccookie_open(init);
     if (!writable) {
         perror("ccookie_open");
-        clarq_free(init->queue);
+        clarinet_free(init->queue);
         free(init->keys);
         free(init);
         return NULL;

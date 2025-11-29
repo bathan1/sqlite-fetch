@@ -17,27 +17,29 @@ describe("Usual queries", () => {
 
     const db = new Database().loadExtension("./libyarts");
     it("maps booleans to text", () => {
-        db
+        const todos = db
             .exec(CREATE_TODOS_TABLE("text"))
             .prepare(`select * from todos`)
-            .all()
-            .forEach(row => {
-                expect("completed" in row).toBe(true);
-                if (row.completed === "true") {} 
-                else if (row.completed === "false") {}
-                else {
-                    expect(`Didn't expect that "completed" column: ${row.completed}`)
-                        .toEqual(0);
-                }
-            });
+            .all();
+        expect(todos.length).toBeGreaterThanOrEqual(1);
+        todos.forEach(row => {
+            expect("completed" in row).toBe(true);
+            if (row.completed === "true") {} 
+            else if (row.completed === "false") {}
+            else {
+                expect(`Didn't expect that "completed" column: ${row.completed}`)
+                    .toEqual(0);
+            }
+        });
     });
 
     it("maps booleans to ints", () => {
-        db
+        const todos = db
             .exec(CREATE_TODOS_TABLE("int"))
             .prepare(`select * from todos`)
-            .all()
-            .forEach(row => {
+            .all();
+        expect(todos.length).toBeGreaterThanOrEqual(1);
+        todos.forEach(row => {
                 expect("completed" in row).toBe(true);
                 if (row.completed === 1) {} 
                 else if (row.completed === 0) {}

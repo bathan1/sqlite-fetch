@@ -674,7 +674,7 @@ static void flush_clarq(struct fetch_state *st) {
 
     /* 2. Now flush new items from Clarinet's queue */
     while (st->clare->count > 0) {
-        char *obj = clarq_pop(st->clare);
+        char *obj = clarinet_pop(st->clare);
         size_t len = strlen(obj);
 
         size_t total = 8 + len;
@@ -776,7 +776,7 @@ static void *fetcher(void *arg) {
     close(fs->ep);
 
     fclose(fs->clare->writable);
-    clarq_free(fs->clare);
+    clarinet_free(fs->clare);
     free(fs);
 
     return NULL;

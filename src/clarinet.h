@@ -1,47 +1,64 @@
 #pragma once
 
-#include <stdbool.h>
-#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <yyjson.h>
-#include <yajl/yajl_parse.h>
 
 #ifndef MAX
 #define MAX(a, b) (a > b ? a : b)
 #endif
 #define MAX_DEPTH 64
 
-/// An 'opaque' queue...
+/**
+ * A JSON object queue with a writable file descriptor.
+ * You can write whatever bytes you want to it...
+ *
+ * ...such as bytes from a TCP socket.
+ *
+ * You can make constant-time reads from both its head and its tail,
+ * so it's technically a "deque".
+ */
 typedef struct clarinet {
-    char   **handle;   // array of char* this is what you need to free
-    size_t   cap;     // total capacity
-    size_t   head;    // next pop index
-    size_t   tail;    // next push index
-    size_t   count;   // number of items
+    /**
+     * Underlying buffer that #clarinet will free via #clarinet_free.
+     */
+    char **buffer;
 
+    /**
+     * #buffer capacity, i.e. read/write at `BUFFER[x >= CAP]` is UB.
+     */
+    unsigned long cap;
+
+    /**
+     * First in end.
+     */
+    unsigned long hd;
+
+    /**
+     * Last in end.
+     */
+    unsigned long tl;
+
+    /**
+     * Stored size.
+     */
+    unsigned long count;
+
+    /**
+     * Plain writable "stream" of the queue so you can just #fwrite bytes to the queue.
+     */
     FILE *writable;
 } clarinet_t;
 
-struct clarinet_state {
-    unsigned int current_depth;
-    unsigned int depth;
-    struct clarinet *queue;
-
-    // clarinet frees everything from here
-    char **keys;
-    size_t keys_size;
-    size_t keys_cap;
-    // key stack
-    char *key[MAX_DEPTH];
-    yyjson_mut_doc *doc_root;
-    // object node stack
-    yyjson_mut_val *object[MAX_DEPTH];
-
-    unsigned int pp_flags;
-};
-typedef struct clarinet_state clarinet_state_t;
-
+/**
+ * Allocate a clarinet handle on the heap.
+ */
 struct clarinet *use_clarinet();
-void clarq_free(struct clarinet *q);
-char *clarq_pop(struct clarinet *q);
+
+/**
+ * Free the clarinet buffer at CLARE.
+ */
+void clarinet_free(struct clarinet *clare);
+
+/**
+ * Pop an object from the queue in CLARE, or NULL if it's empty.
+ */
+char *clarinet_pop(struct clarinet *clare);
