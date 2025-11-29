@@ -40,3 +40,6 @@ make
 ```
 
 And that's it!
+
+## Documentation
+This project uses [Doxygen](https://www.doxygen.nl/) for code documentation.

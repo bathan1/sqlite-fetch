@@ -1,3 +1,8 @@
+/**
+ * @file clarinet.h
+ * @brief A JSON deque for byte streams
+ */
+
 #pragma once
 
 #include <stdio.h>
@@ -8,12 +13,11 @@
 #define MAX_DEPTH 64
 
 /**
- * A JSON object queue with a writable file descriptor.
- * You can write whatever bytes you want to it...
+ * A JSON object queue with a writable file descriptor. You can write whatever bytes you want to it...
  *
- * ...such as bytes from a TCP socket.
+ * ...like bytes from a TCP stream.
  *
- * You can make constant-time reads from both its head and its tail,
+ * Reads are constant-time from both its head and its tail,
  * so it's technically a "deque".
  */
 typedef struct clarinet {

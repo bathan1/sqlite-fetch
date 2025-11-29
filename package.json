@@ -71,6 +71,7 @@
         "kysely-codegen": "^0.18.5",
         "kysely-generic-sqlite": "^1.2.1",
         "kysely-wasm": "^1.2.1",
+        "moxygen": "^0.8.0",
         "openai": "^5.19.1",
         "ora": "^8.2.0",
         "remote-web-streams": "^0.2.0"
