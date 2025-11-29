@@ -62,7 +62,7 @@ struct url {
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL}
      */
-    buffer *hostname;
+    str *hostname;
 
     /**
      * A string containing an initial '/' followed by the path of the URL, 
@@ -70,14 +70,14 @@ struct url {
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/pathname}
      */
-    buffer *pathname;
+    str *pathname;
 
     /**
      * A string containing the port number of the URL.
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/port}
      */
-    buffer *port;
+    str *port;
 };
 
 static char *host(struct url *url);
@@ -123,7 +123,7 @@ int fetch(const char *url, struct fetch_init init) {
     if (!URL) {
         return neg1(errno);
     }
-    fs->hostname = strdup(URL->hostname);
+    fs->hostname = strdup(stroff(URL->hostname));
 
     int sv[2] = {0};
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
@@ -185,14 +185,14 @@ int fetch(const char *url, struct fetch_init init) {
     set_nonblocking(sockfd);
 
     freeaddrinfo(res);
-    buffer *GET = string(
+    str *GET = string(
         "GET %s HTTP/1.1\r\n"
         "Host: %s\r\n"
         "User-Agent: yarts/1.0\r\n"
         "Accept: */*\r\n"
         "Connection: close\r\n"
         "\r\n",
-        URL->pathname,
+        stroff(URL->pathname),
         fs->hostname
     );
     url_free(URL);
@@ -204,9 +204,9 @@ int fetch(const char *url, struct fetch_init init) {
 
     ssize_t sent = 0;
     if (fs->is_tls) {
-        sent = SSL_write(fs->ssl, GET, len(GET));
+        sent = SSL_write(fs->ssl, stroff(GET), len(GET));
     } else {
-        sent = send(sockfd, GET, len(GET), 0);
+        sent = send(sockfd, stroff(GET), len(GET), 0);
     }
 
     free(GET);
@@ -309,9 +309,9 @@ static char *host(struct url *url) {
 
     if (url->port) {
         if (len(url->hostname) > 0 && len(url->port) > 0)
-            return string("%s:%s", url->hostname, url->port);
+            return string("%s:%s", stroff(url->hostname), stroff(url->port));
     }
-    return strdup(url->hostname);
+    return strdup(stroff(url->hostname));
 }
 
 static int url_free(struct url *url) {
@@ -345,7 +345,7 @@ static int tcp_getaddrinfo(
         .ai_family=AF_INET,
         .ai_socktype=SOCK_STREAM
     };
-    int rc = getaddrinfo(url->hostname, url->port, &hints, wout);
+    int rc = getaddrinfo(stroff(url->hostname), stroff(url->port), &hints, wout);
     if (rc != 0) {
         perror("getaddrinfo");
         url_free(url);

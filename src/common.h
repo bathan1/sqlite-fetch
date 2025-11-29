@@ -1,3 +1,7 @@
+/** @defgroup common_h YARTS utilities.
+ *  @brief General convenience functions for the other modules
+ *  @{
+ */
 #pragma once
 
 #include <stdlib.h>
@@ -21,13 +25,24 @@ static long long neg1 (int error_code) {
     return zero(error_code) - 1;
 }
 
-typedef char buffer;
+/**
+ * Flattened struct type that writes `sizeof(size_t)` SIZE bytes
+ * at the head, and then has SIZE + 1 bytes after for the string + nul terminator.
+ *
+ * For example, "hi" on big endian on most 64 bit machines would be encoded as:
+ *
+ * |----0-----|----1----| ... |----7----|----8----|----9----|----10----|
+ * |    0     |    0    | ... |    2    |   'h'   |   'i'   |    0     |
+ */
+typedef char str;
 
-static size_t len(buffer *buf) {
+/** Constant time size lookup that does the type casting for you. */
+static size_t len(str *buf) {
     return *(size_t *)buf;
 }
 
-static buffer *string(const char *fmt, ...) {
+/** Like \c sprintf() except that it *returns* the buffer rather than making you pass it in. */
+static str *string(const char *fmt, ...) {
     va_list ap, ap2;
 
     // --- First pass: measure ---
@@ -64,3 +79,9 @@ static buffer *string(const char *fmt, ...) {
 
     return p;
 }
+
+/** 
+ * Labeled pointer offset addition of \c sizeof(size_t) to S
+ * so you don't need to remember to add it each time.
+ */
+#define stroff(s) (s + sizeof(size_t))

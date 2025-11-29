@@ -58,21 +58,11 @@ int fetch(const char *url, struct fetch_init init);
  */
 char *fetch_pop(int fd, size_t *length);
 
-/**
- * A 'fat' string that stores the c string first, then
- * stores its size after the null terminator '\0'.
- *
- * For example, "hi" on big endian would be encoded as:
- *
- * |----0-----|----1----|----2----|----3----| .... |----10----|
- * |    'h'   |   'i'   |    0    |    0    |      | 00000010 |
- */
-typedef char buffer;
 
-static buffer *append(char **bufptr, size_t len) {
+static char *append(char **bufptr, size_t len) {
     char *buf = *bufptr;
 
-    char *p = realloc(buf, len + 1 + sizeof(size_t));
+    char *p = (char *) realloc(buf, len + 1 + sizeof(size_t));
     if (!p) return NULL;
 
     size_t *meta = (size_t *)(p + len + 1);
@@ -81,45 +71,6 @@ static buffer *append(char **bufptr, size_t len) {
     *bufptr = p;
     return p;
 }
-
-/**
- * Returns a char * buffer that is meant to hold a string of size LENGTH.
- * Uses 64 bits (or whatever your `unsigned long` size is) to save the length.
- */
-// static buffer *string(const char *fmt, ...) {
-//     va_list ap, ap2;
-//
-//     // --- First pass: measure ---
-//     va_start(ap, fmt);
-//     va_copy(ap2, ap);
-//
-//     int needed = vsnprintf(NULL, 0, fmt, ap);
-//     va_end(ap);
-//
-//     if (needed < 0) {
-//         va_end(ap2);
-//         return NULL;
-//     }
-//
-//     size_t len = (size_t)needed;
-//
-//     // --- Allocate fat-string: bytes + '\0' + footer ---
-//     char *p = calloc(len + 1 + sizeof(size_t), 1);
-//     if (!p) {
-//         va_end(ap2);
-//         return NULL;
-//     }
-//
-//     // --- Second pass: write formatted string ---
-//     vsnprintf(p, len + 1, fmt, ap2);
-//     va_end(ap2);
-//
-//     // --- Write footer metadata ---
-//     size_t *meta = (size_t *)(p + len + 1);
-//     *meta = len;
-//
-//     return p;
-// }
 
 static char *to_lower(char *s, size_t len) {
     char *lowercased = malloc(len + 1);
