@@ -2,7 +2,7 @@
 #include <yyjson.h>
 #include <yajl/yajl_parse.h>
 #include "common.h"
-#include "clarinet.h"
+#include "bassoon.h"
 
 #define peek(cur, field) (cur->field[cur->current_depth - 1])
 #define push(cur, field, value) ((cur->field[cur->current_depth]) = value)
@@ -10,7 +10,7 @@
 struct clarinet_state {
     unsigned int current_depth;
     unsigned int depth;
-    struct clarinet *queue;
+    struct bassoon *queue;
 
     // clarinet frees everything from here
     char **keys;
@@ -26,13 +26,13 @@ struct clarinet_state {
 };
 typedef struct clarinet_state clarinet_state_t;
 
-static void queue_init(struct clarinet *q) {
+static void queue_init(struct bassoon *q) {
     q->cap = 8;
     q->buffer = calloc(q->cap, sizeof(char *));
     q->hd = q->tl = q->count = 0;
 }
 
-static void queue_push(struct clarinet *q, char *val) {
+static void queue_push(struct bassoon *q, char *val) {
     if (q->count == q->cap) {
         size_t oldcap = q->cap;
         size_t newcap = oldcap * 2;
@@ -274,7 +274,7 @@ static ssize_t ccookie_read(void *cookie, char *buf, size_t size) {
     ccookie_t *c = cookie;
     clarinet_state_t *st = (clarinet_state_t *) (c->state);
 
-    char *json = clarinet_pop(st->queue);
+    char *json = bass_pop(st->queue);
     if (!json) return 0;
 
     size_t len = strlen(json);
@@ -318,14 +318,14 @@ static int ccookie_free(void *cookie) {
 static FILE *ccookie_open(struct clarinet_state *init) {
     ccookie_t *cookie = malloc(sizeof *cookie);
     if (!cookie) {
-        clarinet_free(init->queue);
+        bass_free(init->queue);
         free(init->keys);
         free(init);
         return NULL;
     }
     yajl_handle parser = yajl_alloc(&callbacks, NULL, (void *) init);
     if (!parser) {
-        clarinet_free(init->queue);
+        bass_free(init->queue);
         free(init->keys);
         free(init);
         return NULL;
@@ -344,7 +344,7 @@ static FILE *ccookie_open(struct clarinet_state *init) {
     return fopencookie(cookie, "r+", io);
 }
 
-void clarinet_free(struct clarinet *q) {
+void bass_free(struct bassoon *q) {
     if (!q || !q->buffer) return;
 
     for (size_t i = 0; i < q->count; i++) {
@@ -358,7 +358,7 @@ void clarinet_free(struct clarinet *q) {
     free(q);
 }
 
-char *clarinet_pop(struct clarinet *q) {
+char *bass_pop(struct bassoon *q) {
     if (q->count == 0)
         return NULL;
 
@@ -370,10 +370,10 @@ char *clarinet_pop(struct clarinet *q) {
     return val;
 }
 
-struct clarinet *use_clarinet() {
+struct bassoon *use_bass() {
     clarinet_state_t *init = calloc(1, sizeof(struct clarinet_state));
     if (!init) return null(ENOMEM);
-    init->queue = calloc(1, sizeof(struct clarinet));
+    init->queue = calloc(1, sizeof(struct bassoon));
     if (!init->queue) return null(ENOMEM);
     queue_init(init->queue);
     init->keys_cap = 1 << 8;
@@ -383,7 +383,7 @@ struct clarinet *use_clarinet() {
     FILE *writable = ccookie_open(init);
     if (!writable) {
         perror("ccookie_open");
-        clarinet_free(init->queue);
+        bass_free(init->queue);
         free(init->keys);
         free(init);
         return NULL;

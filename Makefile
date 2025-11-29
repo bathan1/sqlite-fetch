@@ -1,7 +1,7 @@
 # ---- Config ----
 EXT     := yarts
 TARGET  := lib$(EXT).so
-SRC     := src/yarts.c src/fetch.c src/clarinet.c
+SRC     := src/yarts.c src/fetch.c src/bassoon.c
 OBJ     := $(SRC:.c=.o)
 
 # Detect platform

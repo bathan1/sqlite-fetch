@@ -1,8 +1,7 @@
 /**
- * @file clarinet.h
- * @brief A JSON deque for byte streams
+ * @file bassoon.h
+ * @brief A JSON deque wrapper over byte streams.
  */
-
 #pragma once
 
 #include <stdio.h>
@@ -13,6 +12,8 @@
 #define MAX_DEPTH 64
 
 /**
+ * @ingroup types
+ *
  * A JSON object queue with a writable file descriptor. You can write whatever bytes you want to it...
  *
  * ...like bytes from a TCP stream.
@@ -20,30 +21,20 @@
  * Reads are constant-time from both its head and its tail,
  * so it's technically a "deque".
  */
-struct clarinet {
-    /**
-     * Underlying buffer that #clarinet will free via #clarinet_free.
-     */
+struct bassoon {
+    /** Underlying buffer that #bassoon will free via #bassoon_free . */
     char **buffer;
 
-    /**
-     * #buffer capacity, i.e. read/write at `BUFFER[x >= CAP]` is UB.
-     */
+    /** #buffer capacity, i.e. read/write at `BUFFER[x >= CAP]` is UB. */
     unsigned long cap;
 
-    /**
-     * First in end.
-     */
+    /** First in end. */
     unsigned long hd;
 
-    /**
-     * Last in end.
-     */
+    /** Last in end. */
     unsigned long tl;
 
-    /**
-     * Stored size.
-     */
+    /** Stored size. */
     unsigned long count;
 
     /**
@@ -52,25 +43,20 @@ struct clarinet {
     FILE *writable;
 };
 
-/** 
- * @ingroup types
- */
-typedef struct clarinet clarinet_t;
-
 /**
  * @ingroup functions
  * Allocate a clarinet handle on the heap.
  */
-clarinet_t *use_clarinet();
+struct bassoon *use_bass();
 
 /**
  * @ingroup functions
  * Free the clarinet buffer at CLARE.
  */
-void clarinet_free(clarinet_t *clare);
+void bass_free(struct bassoon *bass);
 
 /**
  * @ingroup functions
  * Pop an object from the queue in CLARE, or NULL if it's empty.
  */
-char *clarinet_pop(clarinet_t *clare);
+char *bass_pop(struct bassoon *bass);

@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 #include "common.h"
-#include "clarinet.h"
+#include "bassoon.h"
 #include "fetch.h"
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -41,7 +41,7 @@ struct fetch_state {
     int expecting_crlf;         // 2 -> expecting "\r\n"
 
     /* --- CLARINET JSON PARSER --- */
-    clarinet_t *clare;
+    struct bassoon *bass;
 
     /* --- NONBLOCKING SEND STATE FOR outfd --- */
     char *pending_send;         // partial write buffer (JSON object)
@@ -86,7 +86,6 @@ static int url_free(struct url *url);
 static int tcp_getaddrinfo(struct url *url, struct addrinfo **wout);
 static int try_socket(struct addrinfo *addrinfo);
 static int try_connect(int sockfd, struct addrinfo *addrinfo);
-static int try_send(int sockfd, char *buffer, size_t length, int flags);
 
 static struct url *parse_url(const char *url);
 
@@ -110,7 +109,7 @@ static void handle_http_body_bytes(struct fetch_state *st,
 static void handle_http_body(struct fetch_state *st);
 
 static bool flush_pending(struct fetch_state *st);
-static void flush_clarq(struct fetch_state *st);
+static void flush_bassoon(struct fetch_state *st);
 
 static void *fetcher(void *arg); 
 
@@ -251,8 +250,8 @@ int fetch(const char *url, struct fetch_init init) {
     fs->chunk_line_len = 0;
 
     // Initialize clarinet
-    fs->clare = use_clarinet();
-    setvbuf(fs->clare->writable, NULL, _IONBF, 0);
+    fs->bass = use_bass();
+    setvbuf(fs->bass->writable, NULL, _IONBF, 0);
     fs->http_done = false;
 
     // spawn background worker thread
@@ -377,17 +376,6 @@ static int try_connect(int sockfd, struct addrinfo *addrinfo) {
     return 0;
 }
 
-static int try_send(int sockfd, char *buffer, size_t length, int flags) {
-    ssize_t sent = send(sockfd, buffer, length, 0);
-    if (sent < 0) {
-        perror("send");
-        free(buffer);
-        close(sockfd);
-        return neg1(errno);
-    }
-    return sent;
-} 
-
 static struct url *parse_url(const char *url) {
     CURLU *u = curl_url();
     if (!u) {
@@ -503,7 +491,7 @@ static void handle_http_body_bytes(struct fetch_state *st,
             size_t to_copy = (available < need) ? available : need;
 
             // Feed payload bytes to Clarinet parser
-            fwrite(data + i, 1, to_copy, st->clare->writable);
+            fwrite(data + i, 1, to_copy, st->bass->writable);
 
             i += to_copy;
             st->current_chunk_size -= to_copy;
@@ -665,7 +653,7 @@ static bool flush_pending(struct fetch_state *st) {
     return true; // pending fully flushed
 }
 
-static void flush_clarq(struct fetch_state *st) {
+static void flush_bassoon(struct fetch_state *st) {
     /* 1. First, flush any partially-sent object. */
     if (st->pending_len > 0) {
         if (!flush_pending(st))
@@ -673,8 +661,8 @@ static void flush_clarq(struct fetch_state *st) {
     }
 
     /* 2. Now flush new items from Clarinet's queue */
-    while (st->clare->count > 0) {
-        char *obj = clarinet_pop(st->clare);
+    while (st->bass->count > 0) {
+        char *obj = bass_pop(st->bass);
         size_t len = strlen(obj);
 
         size_t total = 8 + len;
@@ -721,7 +709,7 @@ static void flush_clarq(struct fetch_state *st) {
 
     /* 3. If parser is done AND no queue items AND no pending sends → close */
     if (st->http_done &&
-        st->clare->count == 0 &&
+        st->bass->count == 0 &&
         st->pending_len == 0 &&
         !st->closed_outfd) {
 
@@ -729,8 +717,6 @@ static void flush_clarq(struct fetch_state *st) {
         st->closed_outfd = true;
     }
 }
-
-
 
 static void *fetcher(void *arg) {
     struct fetch_state *fs = arg;
@@ -755,14 +741,14 @@ static void *fetcher(void *arg) {
             }
 
             if (fd == fs->outfd && (ev & EPOLLOUT)) {
-                flush_clarq(fs);
+                flush_bassoon(fs);
             }
         }
     }
 
     // check once more
-    if (fs->clare->count > 0) {
-        flush_clarq(fs);
+    if (fs->bass->count > 0) {
+        flush_bassoon(fs);
     }
     // cleanup
     if (fs->is_tls) {
@@ -775,8 +761,8 @@ static void *fetcher(void *arg) {
     close(fs->outfd);
     close(fs->ep);
 
-    fclose(fs->clare->writable);
-    clarinet_free(fs->clare);
+    fclose(fs->bass->writable);
+    bass_free(fs->bass);
     free(fs);
 
     return NULL;

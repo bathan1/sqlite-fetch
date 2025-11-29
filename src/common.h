@@ -1,13 +1,3 @@
-/**
- * @defgroup functions Functions
- * @brief All public functions available to `yarts.c`
- */
-
-/**
- * @defgroup types Types & Structs
- * @brief All user-defined types available to `yarts.c`
- */
-
 #pragma once
 
 #include <errno.h>
