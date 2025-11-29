@@ -4,10 +4,18 @@
 #include "common.h"
 #include "bassoon.h"
 
+
+#ifndef MAX
+#define MAX(a, b) (a > b ? a : b)
+#endif
+
+/** Fixed number of JSON object levels to traverse before returning. */
+#define MAX_DEPTH 64
+
 #define peek(cur, field) (cur->field[cur->current_depth - 1])
 #define push(cur, field, value) ((cur->field[cur->current_depth]) = value)
 
-struct clarinet_state {
+struct bassoon_state {
     unsigned int current_depth;
     unsigned int depth;
     struct bassoon *queue;
@@ -24,7 +32,6 @@ struct clarinet_state {
 
     unsigned int pp_flags;
 };
-typedef struct clarinet_state clarinet_state_t;
 
 static void queue_init(struct bassoon *q) {
     q->cap = 8;
@@ -61,7 +68,7 @@ static void queue_push(struct bassoon *q, char *val) {
 }
 
 static int handle_null(void *ctx) {
-    clarinet_state_t *state = ctx;
+    struct bassoon_state *state = ctx;
     if (state->current_depth == 0) {
         fprintf(stderr, "current_depth is 0\n");
         return 0;
@@ -75,7 +82,7 @@ static int handle_null(void *ctx) {
 }
 
 static int handle_bool(void *ctx, int b) {
-    clarinet_state_t *state = ctx;
+    struct bassoon_state *state = ctx;
     if (state->current_depth == 0) {
         fprintf(stderr, "current_depth is 0\n");
         return 0;
@@ -102,7 +109,7 @@ static int handle_double(void *ctx, double d) {
 }
 
 static int handle_number(void *ctx, const char *num, size_t len) {
-    clarinet_state_t *cur = ctx;
+    struct bassoon_state *cur = ctx;
     if (cur->current_depth == 0) {
         fprintf(stderr, "current_depth is 0\n");
         return 0;
@@ -145,7 +152,7 @@ static int handle_number(void *ctx, const char *num, size_t len) {
 static int handle_string(void *ctx,
                          const unsigned char *str, size_t len)
 {
-    clarinet_state_t *cur = ctx;
+    struct bassoon_state *cur = ctx;
 
     if (cur->current_depth == 0 || !peek(cur, key) || !peek(cur, object)) {
         return 0;
@@ -163,7 +170,7 @@ static int handle_string(void *ctx,
 }
 
 static int handle_start_map(void *ctx) {
-    clarinet_state_t *cur = ctx;
+    struct bassoon_state *cur = ctx;
     if (cur->current_depth == 0) {
         yyjson_mut_doc *doc = yyjson_mut_doc_new(NULL);
         yyjson_mut_val *obj = yyjson_mut_obj(doc);
@@ -191,7 +198,7 @@ static int handle_map_key(void *ctx,
                           const unsigned char *str,
                           size_t len)
 {
-    clarinet_state_t *cur = ctx;
+    struct bassoon_state *cur = ctx;
     if (cur->keys_size >= cur->keys_cap) {
         // double
         cur->keys_cap *= 2;
@@ -207,7 +214,7 @@ static int handle_map_key(void *ctx,
 }
 
 static int handle_end_map(void *ctx) {
-    clarinet_state_t *cur = ctx;
+    struct bassoon_state *cur = ctx;
     if (cur->current_depth == 1) {
         // closing root object because root object set depth to 1,
         // so that any nested object child can recursively push its own
@@ -267,12 +274,12 @@ static yajl_callbacks callbacks = {
 
 typedef struct {
     yajl_handle parser;
-    struct clarinet_state *state;
+    struct bassoon_state *state;
 } ccookie_t;
 
 static ssize_t ccookie_read(void *cookie, char *buf, size_t size) {
     ccookie_t *c = cookie;
-    clarinet_state_t *st = (clarinet_state_t *) (c->state);
+    struct bassoon_state *st = (struct bassoon_state *) (c->state);
 
     char *json = bass_pop(st->queue);
     if (!json) return 0;
@@ -315,7 +322,7 @@ static int ccookie_free(void *cookie) {
     return 0;
 }
 
-static FILE *ccookie_open(struct clarinet_state *init) {
+static FILE *ccookie_open(struct bassoon_state *init) {
     ccookie_t *cookie = malloc(sizeof *cookie);
     if (!cookie) {
         bass_free(init->queue);
@@ -371,7 +378,7 @@ char *bass_pop(struct bassoon *q) {
 }
 
 struct bassoon *use_bass() {
-    clarinet_state_t *init = calloc(1, sizeof(struct clarinet_state));
+    struct bassoon_state *init = calloc(1, sizeof(struct bassoon_state));
     if (!init) return null(ENOMEM);
     init->queue = calloc(1, sizeof(struct bassoon));
     if (!init->queue) return null(ENOMEM);
@@ -394,3 +401,5 @@ struct bassoon *use_bass() {
 
 #undef push
 #undef peek
+#undef MAX_DEPTH
+#undef MAX

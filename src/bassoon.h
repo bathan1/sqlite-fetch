@@ -1,28 +1,20 @@
-/**
- * @file bassoon.h
- * @brief A JSON deque wrapper over byte streams.
+/** @defgroup bassoon_h Bassoon JSON Queue
+ *  @brief A JSON deque wrapper over byte streams.
+ *  @{
  */
 #pragma once
 
 #include <stdio.h>
 
-#ifndef MAX
-#define MAX(a, b) (a > b ? a : b)
-#endif
-#define MAX_DEPTH 64
-
 /**
- * @ingroup types
- *
  * A JSON object queue with a writable file descriptor. You can write whatever bytes you want to it...
  *
  * ...like bytes from a TCP stream.
  *
- * Reads are constant-time from both its head and its tail,
- * so it's technically a "deque".
+ * Reads are constant-time from both its head and its tail, so it's technically a "deque".
  */
 struct bassoon {
-    /** Underlying buffer that #bassoon will free via #bassoon_free . */
+    /** Underlying buffer on the HEAP. */
     char **buffer;
 
     /** #buffer capacity, i.e. read/write at `BUFFER[x >= CAP]` is UB. */
@@ -34,29 +26,20 @@ struct bassoon {
     /** Last in end. */
     unsigned long tl;
 
-    /** Stored size. */
+    /** Stored size. Is updated dynamically from calls to #bass_pop. */
     unsigned long count;
 
-    /**
-     * Plain writable "stream" of the queue so you can just #fwrite bytes to the queue.
-     */
+    /** Plain writable "stream" of the queue so you can just \c fwrite() on it. */
     FILE *writable;
 };
 
-/**
- * @ingroup functions
- * Allocate a clarinet handle on the heap.
- */
+/** Dynamically allocate a bassoon queue. */
 struct bassoon *use_bass();
 
-/**
- * @ingroup functions
- * Free the clarinet buffer at CLARE.
- */
+/** Free the queue buffer at BASS. */
 void bass_free(struct bassoon *bass);
 
-/**
- * @ingroup functions
- * Pop an object from the queue in CLARE, or NULL if it's empty.
- */
+/** Pop an object from the queue in BASS, or NULL if it's empty. */
 char *bass_pop(struct bassoon *bass);
+
+/** @} */   // end of bassoon.h group

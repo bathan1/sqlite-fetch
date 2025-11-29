@@ -1,3 +1,8 @@
+/** @defgroup fetch_h Fetch in C
+ *  @brief Simplified web fetch implementation that wraps tcp socket code.
+ *  @{
+ */
+
 #pragma once
 #include <ctype.h>
 #include <errno.h>
@@ -7,19 +12,40 @@
 #include <stdlib.h>
 #include <string.h>
 
+/** Set how #fetch will interpret stream bytes. */
 typedef enum {
-    STREAM_JSON_ARR,
-    STREAM_TEXT
-} fetch_stream_type_e;
+    /** Queues 1 top level JSON object at a time. */
+    FRAME_JSON_OBJ,
+
+    /** 
+     * "Trivial" queue frame, as this just passes through the 
+     * bytes *as-is* to the queue.
+     */
+    FRAME_TEXT
+} fetch_frame_e;
+
+/** Optional fields to write in the Request. */
 struct fetch_init {
+    /** 
+     * A *static* string to declare the HTTP method. Case insensitive.
+     * If not provided, the 'default' is assumed to be a "GET".
+     */
+    const char *method;
+
+    /** Plaintext HTTP headers. */
     char *headers;
+    
+    /** For POST requests. */
     char *body;
-    int stream_type;
+
+    /** A #fetch_frame_e flag to determine byte enqueue strategy. */
+    int frame;
 };
 typedef struct fetch_init fetch_init_t;
+
 /**
- * Connects to host at URL over tcp, then returns the socket fd
- * *after* sending the corresponding HTTP request encoded in URL.
+ * Connects to host at URL over tcp and writes optional HTTP fields in INIT to the request.
+ * It returns the socket fd *after* sending the corresponding HTTP request encoded in URL.
  */
 int fetch(const char *url, struct fetch_init init);
 
@@ -202,3 +228,4 @@ static char **split(const char *str, char delim, int *out_count, int *lens) {
     return result;
 }
 
+/** @} */   // end of fetch_h group
