@@ -1,6 +1,9 @@
 #pragma once
 
+#include <stdlib.h>
+#include <stdio.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -18,3 +21,46 @@ static long long neg1 (int error_code) {
     return zero(error_code) - 1;
 }
 
+typedef char buffer;
+
+static size_t len(buffer *buf) {
+    return *(size_t *)buf;
+}
+
+static buffer *string(const char *fmt, ...) {
+    va_list ap, ap2;
+
+    // --- First pass: measure ---
+    va_start(ap, fmt);
+    va_copy(ap2, ap);
+
+    int needed = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+
+    if (needed < 0) {
+        va_end(ap2);
+        return NULL;
+    }
+
+    size_t len = (size_t)needed;
+
+    // Layout:
+    // [ size_t ][ chars... ][ '\0' ]
+    size_t total = sizeof(size_t) + len + 1;
+
+    char *p = (char *) calloc(1, total);
+    if (!p) {
+        va_end(ap2);
+        return NULL;
+    }
+
+    // --- Write length header ---
+    *(size_t *)p = len;
+
+    // --- Write formatted string after header ---
+    char *str = p + sizeof(size_t);
+    vsnprintf(str, len + 1, fmt, ap2);
+    va_end(ap2);
+
+    return p;
+}

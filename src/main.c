@@ -1,23 +1,14 @@
-#include "fetch.h"
-#include <stdint.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include <stddef.h>
+#include <stdio.h>
 
-int main() {
-    int fd = fetch("https://jsonplaceholder.typicode.com/todos", (fetch_init_t) {0});
+typedef char byte;
 
-    uint64_t len = 0;
-    int count = 0;
-    while (1) {
-        char *obj = fetch_pop(fd, &len);
-        if (!obj) {
-            close(fd);
-            break;
-        }
-        printf("%s\n", obj);
-        free(obj);
-        count++;
-    }
-    return 0;
+size_t len(byte *buf) {
+    return *(size_t *)buf;
 }
 
+int main() {
+    byte buf[] = {0, 0, 0, 0, 0, 0, 0, 0, 2, 'h', 'i', 0};
+    printf("%s\n", buf + sizeof(size_t));
+    return 0;
+}

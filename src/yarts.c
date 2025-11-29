@@ -1,4 +1,5 @@
 // Copyright 2025 Nathanael Oh. All Rights Reserved.
+#include "common.h"
 #include <sqlite3ext.h>
 #include <unistd.h>
 SQLITE_EXTENSION_INIT1
@@ -9,7 +10,6 @@ SQLITE_EXTENSION_INIT1
 
 #include <yyjson.h>
 #include <curl/curl.h>
-#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -403,7 +403,7 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     const char *table_name = argv[2];
     char *first_line = string("CREATE TABLE %s(url hidden text,", table_name);
     sqlite3_str *s = sqlite3_str_new(db);
-    sqlite3_str_appendall(s, first_line);
+    sqlite3_str_appendall(s, first_line + sizeof(size_t));
     for (int i = 1; i < vtab->columns_len; i++) {
         column_def *def = vtab->columns[i];
         sqlite3_str_appendf(s, "%s %s", def->name, def->typename);
