@@ -4,8 +4,7 @@
     "type": "module",
     "description": "yet another runtime tcp stream for sqlite",
     "scripts": {
-        "test": "vitest tests",
-        "moxygen": "rm -rf website/docs/api/*.md && moxygen --groups --anchors --html-anchors --output=website/docs/api/%s.md xml"
+        "test": "vitest tests"
     },
     "keywords": [],
     "author": "bathan1",
@@ -73,7 +72,6 @@
         "kysely-codegen": "^0.18.5",
         "kysely-generic-sqlite": "^1.2.1",
         "kysely-wasm": "^1.2.1",
-        "moxygen": "^0.8.0",
         "openai": "^5.19.1",
         "ora": "^8.2.0",
         "remote-web-streams": "^0.2.0"

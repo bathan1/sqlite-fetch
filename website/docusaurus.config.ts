@@ -86,11 +86,12 @@ const config: Config = {
           label: 'Tutorial',
         },
         {to: '/blog', label: 'Blog', position: 'left'},
+        {href: "/api/index.html", label: "API reference", position: "left", target: "_blank"},
         {
           href: "https://github.com/bathan1/yarts",
           label: 'GitHub',
           position: 'right',
-        },
+        }
       ],
     },
     footer: {
