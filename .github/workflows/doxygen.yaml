@@ -22,16 +22,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'pnpm'
+          cache: "pnpm"
 
       # Install pnpm
-      - name: Setup pnpm
+      - name: Install pnpm
         uses: pnpm/action-setup@v2
         with:
-          version: 9
-          run_install: false
+          version: 9        # <-- REQUIRED so pnpm is actually installed
 
-      # Install npm deps
+      # Install node deps
       - name: Install dependencies
         run: pnpm install
 
@@ -41,15 +40,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y doxygen graphviz
 
+      # Build docs
       - name: Generate API reference
         run: doxygen Doxyfile
 
-      # If you need to copy Awesome-Doxygen (example)
-      # - name: Copy awesome-doxygen assets
-      #   run: |
-      #     mkdir -p html/doxygen-awesome-css
-      #     cp -r node_modules/doxygen-awesome-css/* html/doxygen-awesome-css/
-
+      # Upload
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -61,6 +56,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
