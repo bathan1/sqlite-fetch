@@ -24,6 +24,11 @@ static long long neg1 (int error_code) {
     return zero(error_code) - 1;
 }
 
+static int one (int error_code) {
+    errno = error_code;
+    return 1;
+}
+
 /**
  * Flattened struct type that writes `sizeof(size_t)` SIZE bytes
  * at the head, and then has SIZE + 1 bytes after for the string + nul terminator.

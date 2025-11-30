@@ -299,13 +299,14 @@ static ssize_t bhopcookie_read(void *cookie, char *buf, size_t size) {
     return out_len;
 }
 
-static ssize_t bhopcookie_write(void *cookie, const char *buf, size_t size) {
+static ssize_t bhop_fwrite(void *cookie, const char *buf, size_t size) {
     struct bassoon_state *c = cookie;
     yajl_parse(c->parser, (const unsigned char *)buf, size);
     return size;
 }
 
-static int free_writable(void *cookie) {
+/** Close write end @ COOKIE. */
+static int bhop_fclosew(void *cookie) {
     struct bassoon_state *cc = (void *) cookie;
     if (!cc) {
         return 1;
@@ -322,14 +323,15 @@ static int free_writable(void *cookie) {
     return 0;
 }
 
-static int free_readable(void *cookie) {
+/** Close read end @ COOKIE. */
+static int bhop_fcloser(void *cookie) {
     struct bassoon *queue = (void *) cookie;
     if (!queue) { return 1; }
     bass_free(queue);
     return 0;
 }
 
-static FILE *open_writable(struct bassoon_state *init) {
+static FILE *bhop_fopenw(struct bassoon_state *init) {
     yajl_handle parser = yajl_alloc(&callbacks, NULL, (void *) init);
     if (!parser) {
         bass_free(init->queue);
@@ -341,8 +343,8 @@ static FILE *open_writable(struct bassoon_state *init) {
     init->parser = parser;
 
     cookie_io_functions_t io = {
-        .write = bhopcookie_write,
-        .close = free_writable,
+        .write = bhop_fwrite,
+        .close = bhop_fclosew,
         .read  = NULL,
         .seek  = NULL,
     };
@@ -350,11 +352,10 @@ static FILE *open_writable(struct bassoon_state *init) {
     return fopencookie(init, "w", io);
 }
 
-static FILE *open_readable(struct bassoon *init) {
-    printf("%p\n", init);
+static FILE *bhop_fopenr(struct bassoon *init) {
     cookie_io_functions_t io = {
         .read  = bhopcookie_read,
-        .close = free_readable,
+        .close = bhop_fcloser,
         .write = NULL,
         .seek  = NULL,
     };
@@ -388,35 +389,35 @@ char *bass_pop(struct bassoon *q) {
     return val;
 }
 
-struct bassoon *Bassoon() {
+int Bassoon(FILE *files[2]) {
     struct bassoon_state *init = calloc(1, sizeof(struct bassoon_state));
-    if (!init) return null(ENOMEM);
+    if (!init) return one(ENOMEM);
     init->queue = calloc(1, sizeof(struct bassoon));
-    if (!init->queue) return null(ENOMEM);
+    if (!init->queue) return one(ENOMEM);
     queue_init(init->queue);
     init->keys_cap = 1 << 8;
     init->keys = calloc(1 << 8, sizeof(char *));
     init->keys_size = 0;
 
-    FILE *writable = open_writable(init);
+    FILE *writable = bhop_fopenw(init);
     if (!writable) {
         perror("open_writable");
         bass_free(init->queue);
         free(init->keys);
         free(init);
-        return NULL;
+        return one(ENOMEM);
     }
-    FILE *readable = open_readable(init->queue);
+    FILE *readable = bhop_fopenr(init->queue);
     if (!readable) {
         perror("open_readable");
         bass_free(init->queue);
         free(init->keys);
         free(init);
+        return one(ENOMEM);
     }
-    init->queue->writable = writable;
-    init->queue->readable = readable;
-
-    return init->queue;
+    files[0] = writable;
+    files[1] = readable;
+    return 0;
 }
 
 #undef push

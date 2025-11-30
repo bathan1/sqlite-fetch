@@ -38,14 +38,15 @@ struct bassoon {
     /** Stored size. Is updated dynamically from calls to #bass_pop. */
     unsigned long count;
 
-    /** Plain writable "stream" of the queue so you can just \c fwrite() on it. */
+    /** Writable end of the queue so you can just \c fwrite() on it. */
     FILE *writable;
 
+    /** Readable end of the queue that emits NDJSON, so you get just \c getline() on it. */
     FILE *readable;
 };
 
 /** Dynamically allocate a bassoon queue. */
-struct bassoon *Bassoon();
+int Bassoon(FILE *files[2]);
 
 /** Free the queue buffer at BASS. */
 void bass_free(struct bassoon *bass);
