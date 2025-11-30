@@ -490,7 +490,7 @@ static void handle_http_body_bytes(struct fetch_state *st,
 
             size_t to_copy = (available < need) ? available : need;
 
-            // Feed payload bytes to Clarinet parser
+            // Feed payload bytes to bassoon parser
             fwrite(data + i, 1, to_copy, st->bass->writable);
 
             i += to_copy;

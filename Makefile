@@ -18,6 +18,11 @@ LDFLAGS := -shared
 # System libraries
 LIBS := -lcurl -lyajl -lyyjson -lsqlite3
 
+# Install locations
+PREFIX       := /usr/local
+LIBDIR       := $(PREFIX)/lib
+INCLUDEDIR   := $(PREFIX)/include/$(EXT)
+
 # ---- Build Rules ----
 
 all: $(TARGET)
@@ -28,8 +33,40 @@ $(TARGET): $(OBJ)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# ---- Install / Uninstall ----
+
+install: $(TARGET)
+	@echo "Installing $(TARGET) to $(LIBDIR)"
+	mkdir -p $(LIBDIR)
+	install -m 755 $(TARGET) $(LIBDIR)
+
+	@echo "Installing headers to $(INCLUDEDIR)"
+	mkdir -p $(INCLUDEDIR)
+	install -m 644 src/*.h $(INCLUDEDIR)
+
+ifeq ($(UNAME_S),Linux)
+	@echo "Updating ldconfig cache"
+	ldconfig
+endif
+
+	@echo "Install complete."
+
+uninstall:
+	@echo "Removing library from $(LIBDIR)"
+	rm -f $(LIBDIR)/$(TARGET)
+
+	@echo "Removing headers from $(INCLUDEDIR)"
+	rm -rf $(INCLUDEDIR)
+
+ifeq ($(UNAME_S),Linux)
+	@echo "Updating ldconfig cache"
+	ldconfig
+endif
+
+	@echo "Uninstall complete."
+
 clean:
 	rm -f $(OBJ) $(TARGET)
 
-.PHONY: all clean
+.PHONY: all clean install uninstall
 

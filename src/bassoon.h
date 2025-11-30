@@ -11,6 +11,20 @@
  * ...like bytes from a TCP stream.
  *
  * Reads are constant-time from both its head and its tail, so it's technically a "deque".
+ *
+ * @code
+ * #include "yarts/bassoon.h"
+ * #include <stdio.h>
+ *
+ * int main() {
+ *     struct bassoon *b = bass();
+ *     const char hello[] = "{\"hello\": \"world\"}";
+ *     const char foo[] = "{\"foo\": \"bar\"}";
+ *     fwrite(hello, sizeof(char), sizeof(hello), b->writable);
+ *     fwrite(foo, sizeof(char), sizeof(foo), b->writable);
+ *     return 0;
+ * }
+ * @endcode
  */
 struct bassoon {
     /** Underlying buffer on the HEAP. */
