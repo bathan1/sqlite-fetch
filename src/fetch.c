@@ -22,7 +22,6 @@ struct fetch_state {
     int ep;           // epoll instance FD
     
     char *hostname;
-    bool is_tls;
     SSL_CTX *ssl_ctx;
     SSL     *ssl; 
 
@@ -95,13 +94,6 @@ static void set_nonblocking(int fd) {
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
-static ssize_t net_recv(struct fetch_state *st, void *buf, size_t len) {
-    if (!st->is_tls)
-        return recv(st->netfd, buf, len, 0);
-    else
-        return SSL_read(st->ssl, buf, len);
-}
-
 static bool handle_http_headers(struct fetch_state *st);
 static void handle_http_body_bytes(struct fetch_state *st,
                                    const char *data,
@@ -118,7 +110,7 @@ FILE *fetch(const char *url, const char *init[4]) {
     if (!fs) {
         return null(ENOMEM);
     }
-    fs->is_tls = strncmp(url, "https://", 8) == 0;
+    bool is_tls = strncmp(url, "https://", 8) == 0;
     struct url *URL = parse_url(url);
     if (!URL) {
         return null(errno);
@@ -146,9 +138,9 @@ FILE *fetch(const char *url, const char *init[4]) {
     int sockfd = try_socket(res);
     if (sockfd < 0) { url_free(URL); free(fs); return null(ENOMEM); }
     if (try_connect(sockfd, res) != 0) { url_free(URL); free(fs); return null(ECONNREFUSED); }
-    if (fs->is_tls) {
+    if (is_tls) {
         // Try tls and abort early
-        if (ssl_connect(sockfd, fs->hostname, &fs->ssl_ctx, &fs->ssl)) {
+        if (connect_ssl(&fs->ssl, sockfd, &fs->ssl_ctx, fs->hostname)) {
             close(sockfd);
             close(fetch_fd);
             free(fs->hostname);
@@ -177,12 +169,7 @@ FILE *fetch(const char *url, const char *init[4]) {
         return null(errno);
     }
 
-    ssize_t sent = 0;
-    if (fs->is_tls) {
-        sent = SSL_write(fs->ssl, stroff(GET), len(GET));
-    } else {
-        sent = send(sockfd, stroff(GET), len(GET), 0);
-    }
+    ssize_t sent = send_maybe_tls(fs->ssl, sockfd, stroff(GET), len(GET));
     free(GET);
     if (sent < 0 && errno != EAGAIN) {
         return null(errno);
@@ -489,8 +476,7 @@ static bool handle_http_headers(struct fetch_state *st) {
     char buf[4096];
 
     for (;;) {
-        ssize_t n = net_recv(st, buf, sizeof(buf));
-
+        ssize_t n = recv_maybe_tls(st->ssl, st->netfd, buf, sizeof(buf));
         if (n > 0) {
             // Append to header buffer
             if (st->header_len + n > sizeof(st->header_buf)) {
@@ -554,7 +540,7 @@ static bool handle_http_headers(struct fetch_state *st) {
 static void handle_http_body(struct fetch_state *st) {
     char buf[4096];
 
-    ssize_t n = net_recv(st, buf, sizeof(buf));
+    ssize_t n = recv_maybe_tls(st->ssl, st->netfd, buf, sizeof(buf));
 
     if (n > 0) {
         // feed raw bytes to chunk/body parser
@@ -721,11 +707,7 @@ static void *fetcher(void *arg) {
     fclose(fs->bass[1]);
     fs->bass[1] = NULL;
 
-    if (fs->is_tls) {
-        SSL_shutdown(fs->ssl);
-        SSL_free(fs->ssl);
-        SSL_CTX_free(fs->ssl_ctx);
-    }
+    cleanup_ssl(fs->ssl, fs->ssl_ctx);
 
     if (!fs->closed_outfd) {
         close(fs->outfd);

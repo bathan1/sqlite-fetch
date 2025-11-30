@@ -1,9 +1,11 @@
-#include "common.h"
 #include "tls.h"
 #include <openssl/err.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
-int ssl_connect(int sockfd, const char *hostname, SSL_CTX **ctx, SSL **ssl) {
+int connect_ssl(SSL **ssl, int sockfd,
+                SSL_CTX **ctx, const char *hostname)
+{
     SSL_load_error_strings();
     OpenSSL_add_ssl_algorithms();
 
@@ -37,3 +39,44 @@ int ssl_connect(int sockfd, const char *hostname, SSL_CTX **ctx, SSL **ssl) {
     }
     return 0;
 }
+
+void cleanup_ssl(SSL *ssl, SSL_CTX *ctx) {
+    if (ssl) {
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+    }
+    if (ctx) {
+        SSL_CTX_free(ctx);
+    }
+}
+
+ssize_t send_maybe_tls(SSL *ssl, int sockfd,
+                       char *bytes, size_t len)
+{
+    if (sockfd < 0 && !ssl) {
+        // nothing to write to!
+        return -1;
+    }
+
+    if (ssl) {
+        return SSL_write(ssl, bytes, len);
+    } else {
+        return send(sockfd, bytes, len, 0);
+    }
+}
+
+ssize_t recv_maybe_tls(SSL *ssl, int sockfd,
+                       void *buf, size_t len)
+{
+    if (sockfd < 0 && !ssl) {
+        // nothing to write to!
+        return -1;
+    }
+
+    if (ssl) {
+        return SSL_read(ssl, buf, len);
+    } else {
+        return recv(sockfd, buf, len, 0);
+    }
+}
+
