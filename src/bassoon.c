@@ -377,7 +377,7 @@ char *bass_pop(struct bassoon *q) {
     return val;
 }
 
-struct bassoon *bass() {
+struct bassoon *Bassoon() {
     struct bassoon_state *init = calloc(1, sizeof(struct bassoon_state));
     if (!init) return null(ENOMEM);
     init->queue = calloc(1, sizeof(struct bassoon));

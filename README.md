@@ -15,7 +15,7 @@ To build using the Makefile, you need the following libraries installed onto you
     - [yajl](https://github.com/lloyd/yajl) for stream parsing.
     - [yyjson](https://github.com/ibireme/yyjson) to be able to work with JSONs in C without going insane.
     - [libcurl](https://curl.se/libcurl/) to parse URLs.
-and of course, SQLite.
+    - SQLite (duh!)
 
 To install yajl and libcurl Ubuntu, for example:
 
@@ -41,5 +41,20 @@ make
 
 And that's it!
 
+## Other Scripts
+To install / uninstall the yarts headers from your usr local lib:
+
+```bash
+sudo make install
+sudo make uninstall
+```
+
+To run the test script:
+
+```bash
+pnpm run test
+```
+
 ## Documentation
-This project uses [Doxygen](https://www.doxygen.nl/) for code documentation.
+This project uses [Doxygen](https://www.doxygen.nl/) for code documentation
+and uses [Docusaurus](http://docusaurus.io/) for the tutorial docs.

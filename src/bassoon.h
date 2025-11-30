@@ -1,33 +1,29 @@
-/** @file bassoon.h Bassoon JSON Queue
- *  @brief A JSON deque wrapper over byte streams.
+/** 
+ * @file bassoon.h Bassoon JSON Queue
+ * @brief A JSON deque wrapper over byte streams.
+ *
+ * @example examples/c/bassoon_print.c
+ * Demonstrates how to use bassoon streaming JSON.
+ *
+ * Compile with:
+ * ```bash
+ * gcc bassoon_print.c -lyarts
+ * ```
+ *
+ * See the [README](README.md) on installing onto the usr lib.
  */
 #pragma once
 
 #include <stdio.h>
 
 /**
- * A JSON object queue with a writable file descriptor. You can write whatever bytes you want to it...
- *
- * ...like bytes from a TCP stream.
+ * A JSON object queue with a writable file descriptor. You can write 
+ * whatever bytes you want to it, like the bytes from a TCP stream.
  *
  * Reads are constant-time from both its head and its tail, so it's technically a "deque".
- *
- * @code
- * #include "yarts/bassoon.h"
- * #include <stdio.h>
- *
- * int main() {
- *     struct bassoon *b = bass();
- *     const char hello[] = "{\"hello\": \"world\"}";
- *     const char foo[] = "{\"foo\": \"bar\"}";
- *     fwrite(hello, sizeof(char), sizeof(hello), b->writable);
- *     fwrite(foo, sizeof(char), sizeof(foo), b->writable);
- *     return 0;
- * }
- * @endcode
  */
 struct bassoon {
-    /** Underlying buffer on the HEAP. */
+    /** The actual buffer. */
     char **buffer;
 
     /** #buffer capacity, i.e. read/write at `BUFFER[x >= CAP]` is UB. */
@@ -47,7 +43,7 @@ struct bassoon {
 };
 
 /** Dynamically allocate a bassoon queue. */
-struct bassoon *bass();
+struct bassoon *Bassoon();
 
 /** Free the queue buffer at BASS. */
 void bass_free(struct bassoon *bass);
