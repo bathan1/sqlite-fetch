@@ -273,31 +273,39 @@ static yajl_callbacks callbacks = {
     .yajl_end_array   = handle_end_array
 };
 
-static ssize_t ccookie_read(void *cookie, char *buf, size_t size) {
-    struct bassoon_state *c = cookie;
+static ssize_t bhopcookie_read(void *cookie, char *buf, size_t size) {
+    struct bassoon *c = cookie;
 
-    char *json = bass_pop(c->queue);
-    if (!json) return 0;
+    char *json = bass_pop(c);
+    if (!json)
+        return 0;
 
-    size_t len = strlen(json);
+    size_t json_len = strlen(json);
+    size_t out_len;
 
-    if (len > size) {
-        len = size;
+    /* We want to include '\n' if possible */
+    if (json_len + 1 <= size) {
+        /* Full JSON plus newline fits */
+        memcpy(buf, json, json_len);
+        buf[json_len] = '\n';
+        out_len = json_len + 1;
+    } else {
+        /* Otherwise, we just emit truncated JSON only */
+        memcpy(buf, json, size);
+        out_len = size;
     }
 
-    memcpy(buf, json, len);
     free(json);
-
-    return len;
+    return out_len;
 }
 
-static ssize_t ccookie_write(void *cookie, const char *buf, size_t size) {
+static ssize_t bhopcookie_write(void *cookie, const char *buf, size_t size) {
     struct bassoon_state *c = cookie;
     yajl_parse(c->parser, (const unsigned char *)buf, size);
     return size;
 }
 
-static int ccookie_free(void *cookie) {
+static int free_writable(void *cookie) {
     struct bassoon_state *cc = (void *) cookie;
     if (!cc) {
         return 1;
@@ -314,7 +322,14 @@ static int ccookie_free(void *cookie) {
     return 0;
 }
 
-static FILE *ccookie_open(struct bassoon_state *init) {
+static int free_readable(void *cookie) {
+    struct bassoon *queue = (void *) cookie;
+    if (!queue) { return 1; }
+    bass_free(queue);
+    return 0;
+}
+
+static FILE *open_writable(struct bassoon_state *init) {
     yajl_handle parser = yajl_alloc(&callbacks, NULL, (void *) init);
     if (!parser) {
         bass_free(init->queue);
@@ -326,13 +341,25 @@ static FILE *ccookie_open(struct bassoon_state *init) {
     init->parser = parser;
 
     cookie_io_functions_t io = {
-        .read  = ccookie_read,
-        .write = ccookie_write,
+        .write = bhopcookie_write,
+        .close = free_writable,
+        .read  = NULL,
         .seek  = NULL,
-        .close = ccookie_free
     };
 
-    return fopencookie(init, "r+", io);
+    return fopencookie(init, "w", io);
+}
+
+static FILE *open_readable(struct bassoon *init) {
+    printf("%p\n", init);
+    cookie_io_functions_t io = {
+        .read  = bhopcookie_read,
+        .close = free_readable,
+        .write = NULL,
+        .seek  = NULL,
+    };
+
+    return fopencookie(init, "r", io);
 }
 
 void bass_free(struct bassoon *q) {
@@ -371,17 +398,17 @@ struct bassoon *Bassoon() {
     init->keys = calloc(1 << 8, sizeof(char *));
     init->keys_size = 0;
 
-    FILE *writable = ccookie_open(init);
+    FILE *writable = open_writable(init);
     if (!writable) {
-        perror("ccookie_open on writable");
+        perror("open_writable");
         bass_free(init->queue);
         free(init->keys);
         free(init);
         return NULL;
     }
-    FILE *readable = ccookie_open(init);
+    FILE *readable = open_readable(init->queue);
     if (!readable) {
-        perror("ccookie_open on readable");
+        perror("open_readable");
         bass_free(init->queue);
         free(init->keys);
         free(init);
