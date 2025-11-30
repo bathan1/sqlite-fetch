@@ -1,5 +1,16 @@
-/** @file fetch.h Fetch
- *  @brief Simplified Web Fetch implementation that wraps tcp socket code.
+/**
+ * @file fetch.h
+ * @brief Simplified [Web Fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) implementation for C.
+ *
+ * @example examples/c/fetch_print.c
+ * Demonstrates how to stream JSON with fetch.
+ *
+ * Compile with:
+ * ```bash
+ * gcc fetch_print.c -lyarts
+ * ```
+ *
+ * See the [README](README.md) on installing onto the usr lib.
  */
 
 #pragma once
@@ -17,13 +28,20 @@
  * You can pass in plain integers to the frame slot and that will 
  * work just fine, you will just get some compiler warnings. */
 
-/** Default stream mode that parses JSON objects into NDJSON. */
+/** 
+ * @brief Parse JSON objects into NDJSON.
+ *
+ * This is also the default parse strategy.
+ */
 static const char *FRAME_NDJSON = 0;
 
 /**
- * Connects to host at URL over tcp and writes optional HTTP fields in INIT to the request.
- * It returns a readable FILE stream that separates the frames by newlines, so you can
- * easily read each logical frame one by one.
+ * @brief \c send() HTTP Request over a TCP socket, wrapping the response socket over
+ * the returned `FILE *` stream.
+ *
+ * Connects to host at URL over tcp and writes optional HTTP fields in INIT 
+ * to the request. It returns a readable FILE stream that separates the frames 
+ * by newlines, so you can read each logical frame one by one easier.
  *
  * INIT slots are:
  *  - [0]: Method case insensitive
@@ -33,6 +51,9 @@ static const char *FRAME_NDJSON = 0;
  *
  * INIT[3] is the only slot that #fetch will read as a plain
  * `uint64`.
+ *
+ * @retval ~0 OK - Anything not 0 means the response stream was successfully opened.
+ * @retval NULL Error - Check `errno` to learn about the error (too many to list here).
  */
 FILE *fetch(const char *url, const char *init[4]);
 

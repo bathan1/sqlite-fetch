@@ -2,6 +2,7 @@
 #include "common.h"
 #include "bassoon.h"
 #include "fetch.h"
+#include "tls.h"
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <pthread.h>
@@ -146,39 +147,14 @@ FILE *fetch(const char *url, const char *init[4]) {
     if (sockfd < 0) { url_free(URL); free(fs); return null(ENOMEM); }
     if (try_connect(sockfd, res) != 0) { url_free(URL); free(fs); return null(ECONNREFUSED); }
     if (fs->is_tls) {
-        SSL_load_error_strings();
-        OpenSSL_add_ssl_algorithms();
-
-        fs->ssl_ctx = SSL_CTX_new(TLS_client_method());
-        if (!fs->ssl_ctx) {
+        // Try tls and abort early
+        if (ssl_connect(sockfd, fs->hostname, &fs->ssl_ctx, &fs->ssl)) {
             close(sockfd);
             close(fetch_fd);
+            free(fs->hostname);
             free(fs);
-            return null(errno);
-        }
-
-        fs->ssl = SSL_new(fs->ssl_ctx);
-        if (!fs->ssl) {
-            SSL_CTX_free(fs->ssl_ctx);
-            close(sockfd);
-            close(fetch_fd);
-            free(fs);
-            return null(errno);
-        }
-
-        SSL_set_fd(fs->ssl, sockfd);
-        SSL_set_tlsext_host_name(fs->ssl, fs->hostname);
-
-        int err = SSL_connect(fs->ssl);
-        if (err <= 0) {
-            ERR_print_errors_fp(stderr);
-            SSL_free(fs->ssl);
-            SSL_CTX_free(fs->ssl_ctx);
-            close(sockfd);
-            close(fetch_fd);
-            free(fs);
-            return null(errno);
-        }
+            return null(ECONNABORTED);
+        } // else { ok! }
     }
 
     set_nonblocking(sockfd);

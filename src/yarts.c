@@ -453,19 +453,6 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     return vtab;
 }
 
-/**
- * @example
- * ```sql
- * CREATE VIRTUAL TABLE todos using fetch (
- *     url = 'https://jsonplaceholder.typicode.com/todos',
- *
- *     id int,
- *     "userId" int,
- *     title text,
- *     description text
- * );
- * ```
- */
 static int xConnect(sqlite3 *pdb, void *paux, int argc,
                      const char *const *argv, sqlite3_vtab **pp_vtab,
                      char **pz_err) {
