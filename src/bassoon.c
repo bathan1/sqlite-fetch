@@ -16,6 +16,7 @@
 #define push(cur, field, value) ((cur->field[cur->current_depth]) = value)
 
 struct bassoon_state {
+    yajl_handle parser;
     unsigned int current_depth;
     unsigned int depth;
     struct bassoon *queue;
@@ -272,16 +273,10 @@ static yajl_callbacks callbacks = {
     .yajl_end_array   = handle_end_array
 };
 
-typedef struct {
-    yajl_handle parser;
-    struct bassoon_state *state;
-} ccookie_t;
-
 static ssize_t ccookie_read(void *cookie, char *buf, size_t size) {
-    ccookie_t *c = cookie;
-    struct bassoon_state *st = (struct bassoon_state *) (c->state);
+    struct bassoon_state *c = cookie;
 
-    char *json = bass_pop(st->queue);
+    char *json = bass_pop(c->queue);
     if (!json) return 0;
 
     size_t len = strlen(json);
@@ -297,13 +292,13 @@ static ssize_t ccookie_read(void *cookie, char *buf, size_t size) {
 }
 
 static ssize_t ccookie_write(void *cookie, const char *buf, size_t size) {
-    ccookie_t *c = cookie;
+    struct bassoon_state *c = cookie;
     yajl_parse(c->parser, (const unsigned char *)buf, size);
     return size;
 }
 
 static int ccookie_free(void *cookie) {
-    ccookie_t *cc = (void *) cookie;
+    struct bassoon_state *cc = (void *) cookie;
     if (!cc) {
         return 1;
     }
@@ -311,11 +306,8 @@ static int ccookie_free(void *cookie) {
     if (cc->parser) {
         yajl_free(cc->parser);
     }
-    if (cc->state) {
-        if (cc->state->keys) {
-            free(cc->state->keys);
-        }
-        free(cc->state);
+    if (cc->keys) {
+        free(cc->keys);
     }
     free(cc);
 
@@ -323,13 +315,6 @@ static int ccookie_free(void *cookie) {
 }
 
 static FILE *ccookie_open(struct bassoon_state *init) {
-    ccookie_t *cookie = malloc(sizeof *cookie);
-    if (!cookie) {
-        bass_free(init->queue);
-        free(init->keys);
-        free(init);
-        return NULL;
-    }
     yajl_handle parser = yajl_alloc(&callbacks, NULL, (void *) init);
     if (!parser) {
         bass_free(init->queue);
@@ -338,8 +323,7 @@ static FILE *ccookie_open(struct bassoon_state *init) {
         return NULL;
     }
 
-    cookie->parser = parser;
-    cookie->state = init;
+    init->parser = parser;
 
     cookie_io_functions_t io = {
         .read  = ccookie_read,
@@ -348,7 +332,7 @@ static FILE *ccookie_open(struct bassoon_state *init) {
         .close = ccookie_free
     };
 
-    return fopencookie(cookie, "r+", io);
+    return fopencookie(init, "r+", io);
 }
 
 void bass_free(struct bassoon *q) {
@@ -389,13 +373,22 @@ struct bassoon *Bassoon() {
 
     FILE *writable = ccookie_open(init);
     if (!writable) {
-        perror("ccookie_open");
+        perror("ccookie_open on writable");
         bass_free(init->queue);
         free(init->keys);
         free(init);
         return NULL;
     }
+    FILE *readable = ccookie_open(init);
+    if (!readable) {
+        perror("ccookie_open on readable");
+        bass_free(init->queue);
+        free(init->keys);
+        free(init);
+    }
     init->queue->writable = writable;
+    init->queue->readable = readable;
+
     return init->queue;
 }
 

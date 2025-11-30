@@ -40,6 +40,8 @@ struct bassoon {
 
     /** Plain writable "stream" of the queue so you can just \c fwrite() on it. */
     FILE *writable;
+
+    FILE *readable;
 };
 
 /** Dynamically allocate a bassoon queue. */
