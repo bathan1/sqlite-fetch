@@ -46,7 +46,7 @@ typedef struct fetch_init fetch_init_t;
  * Connects to host at URL over tcp and writes optional HTTP fields in INIT to the request.
  * It returns the socket fd *after* sending the corresponding HTTP request encoded in URL.
  */
-int fetch(const char *url, struct fetch_init init);
+FILE *fetch(const char *url, struct fetch_init init);
 
 /**
  * Pop the next parser framed object from the fetch buffer at FD. If LENGTH is passed in, 

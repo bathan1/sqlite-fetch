@@ -40,11 +40,10 @@ struct fetch_state {
     size_t current_chunk_size;  // remaining bytes in current chunk
     int expecting_crlf;         // 2 -> expecting "\r\n"
 
-    /* --- CLARINET JSON PARSER --- */
-    struct bassoon *bass;
+    FILE *bass[2];
 
     /* --- NONBLOCKING SEND STATE FOR outfd --- */
-    char *pending_send;         // partial write buffer (JSON object)
+    char *pending_buf;         // partial write buffer (JSON object)
     size_t pending_len;         // bytes left to send
     size_t pending_off;         // current offset in pending_send
 
@@ -113,15 +112,15 @@ static void flush_bassoon(struct fetch_state *st);
 
 static void *fetcher(void *arg); 
 
-int fetch(const char *url, struct fetch_init init) {
+FILE *fetch(const char *url, struct fetch_init init) {
     struct fetch_state *fs = calloc(1, sizeof(struct fetch_state));
     if (!fs) {
-        return -1;
+        return null(ENOMEM);
     }
     fs->is_tls = strncmp(url, "https://", 8) == 0;
     struct url *URL = parse_url(url);
     if (!URL) {
-        return neg1(errno);
+        return null(errno);
     }
     fs->hostname = strdup(stroff(URL->hostname));
 
@@ -129,7 +128,7 @@ int fetch(const char *url, struct fetch_init init) {
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
         url_free(URL);
         free(fs);
-        return neg1(errno);
+        return null(errno);
     }
     int app_fd = sv[0];
     int fetch_fd = sv[1];
@@ -140,12 +139,12 @@ int fetch(const char *url, struct fetch_init init) {
     if (rc != 0) { 
         url_free(URL);
         free(fs);
-        return neg1(errno);
+        return null(errno);
     }
 
     int sockfd = try_socket(res);
-    if (sockfd < 0) { url_free(URL); free(fs); return neg1(ENOMEM); }
-    if (try_connect(sockfd, res) != 0) { url_free(URL); free(fs); return neg1(ECONNREFUSED); }
+    if (sockfd < 0) { url_free(URL); free(fs); return null(ENOMEM); }
+    if (try_connect(sockfd, res) != 0) { url_free(URL); free(fs); return null(ECONNREFUSED); }
     if (fs->is_tls) {
         SSL_load_error_strings();
         OpenSSL_add_ssl_algorithms();
@@ -155,7 +154,7 @@ int fetch(const char *url, struct fetch_init init) {
             close(sockfd);
             close(fetch_fd);
             free(fs);
-            return neg1(errno);
+            return null(errno);
         }
 
         fs->ssl = SSL_new(fs->ssl_ctx);
@@ -164,7 +163,7 @@ int fetch(const char *url, struct fetch_init init) {
             close(sockfd);
             close(fetch_fd);
             free(fs);
-            return neg1(errno);
+            return null(errno);
         }
 
         SSL_set_fd(fs->ssl, sockfd);
@@ -178,7 +177,7 @@ int fetch(const char *url, struct fetch_init init) {
             close(sockfd);
             close(fetch_fd);
             free(fs);
-            return -1;
+            return null(errno);
         }
     }
 
@@ -199,7 +198,7 @@ int fetch(const char *url, struct fetch_init init) {
 
     if (!GET) {
         close(sockfd);
-        return neg1(errno);
+        return null(errno);
     }
 
     ssize_t sent = 0;
@@ -208,16 +207,15 @@ int fetch(const char *url, struct fetch_init init) {
     } else {
         sent = send(sockfd, stroff(GET), len(GET), 0);
     }
-
     free(GET);
     if (sent < 0 && errno != EAGAIN) {
-        return neg1(errno);
+        return null(errno);
     }
 
     if (!fs) {
         close(sockfd);
         close(fetch_fd);
-        return neg1(ENOMEM);
+        return null(ENOMEM);
     }
     fs->netfd = sockfd;
     fs->outfd = fetch_fd;
@@ -226,19 +224,13 @@ int fetch(const char *url, struct fetch_init init) {
         free(fs);
         close(sockfd);
         close(fetch_fd);
-        return neg1(errno);
+        return null(errno);
     }
     struct epoll_event ev = {
         .events = EPOLLIN,
         .data.fd = sockfd
     };
     epoll_ctl(fs->ep, EPOLL_CTL_ADD, sockfd, &ev);
-
-    struct epoll_event ev2 = {
-        .events = EPOLLOUT,
-        .data.fd = fetch_fd
-    };
-    epoll_ctl(fs->ep, EPOLL_CTL_ADD, fetch_fd, &ev2);
 
     fs->headers_done = false;
     fs->header_len = 0;
@@ -249,9 +241,12 @@ int fetch(const char *url, struct fetch_init init) {
     fs->reading_chunk_size = true;
     fs->chunk_line_len = 0;
 
-    // Initialize clarinet
-    fs->bass = Bassoon();
-    setvbuf(fs->bass->writable, NULL, _IONBF, 0);
+    if (bhop(fs->bass)) {
+        perror("bhop()");
+        close(app_fd);
+        return NULL;
+    }
+
     fs->http_done = false;
 
     // spawn background worker thread
@@ -261,7 +256,13 @@ int fetch(const char *url, struct fetch_init init) {
     // detach so it cleans up after finishing
     pthread_detach(tid);
 
-    return app_fd;
+    FILE *fetchfile = fdopen(app_fd, "r");
+    if (!fetchfile) {
+        perror("fdopen()");
+        close(app_fd);
+        return NULL;
+    }
+    return fetchfile;
 }
 
 static ssize_t read_full(int fd, void *buf, size_t len) {
@@ -491,7 +492,7 @@ static void handle_http_body_bytes(struct fetch_state *st,
             size_t to_copy = (available < need) ? available : need;
 
             // Feed payload bytes to bassoon parser
-            fwrite(data + i, 1, to_copy, st->bass->writable);
+            fwrite(data + i, 1, to_copy, st->bass[0]);
 
             i += to_copy;
             st->current_chunk_size -= to_copy;
@@ -626,7 +627,7 @@ static void handle_http_body(struct fetch_state *st) {
 static bool flush_pending(struct fetch_state *st) {
     while (st->pending_len > 0) {
         ssize_t n = send(st->outfd,
-                         st->pending_send + st->pending_off,
+                         st->pending_buf + st->pending_off,
                          st->pending_len,
                          0);
 
@@ -645,8 +646,8 @@ static bool flush_pending(struct fetch_state *st) {
     }
 
     // pending complete: free and reset
-    free(st->pending_send);
-    st->pending_send = NULL;
+    free(st->pending_buf);
+    st->pending_buf = NULL;
     st->pending_off = 0;
     st->pending_len = 0;
 
@@ -654,66 +655,76 @@ static bool flush_pending(struct fetch_state *st) {
 }
 
 static void flush_bassoon(struct fetch_state *st) {
-    /* 1. First, flush any partially-sent object. */
+    FILE *rd = st->bass[1];
+    int out = st->outfd;
+
+    /* 1. Handle pending partial send */
     if (st->pending_len > 0) {
-        if (!flush_pending(st))
-            return;  // still blocked
-    }
+        ssize_t n = send(out,
+                         st->pending_buf + st->pending_off,
+                         st->pending_len - st->pending_off,
+                         MSG_NOSIGNAL);
 
-    /* 2. Now flush new items from Clarinet's queue */
-    while (st->bass->count > 0) {
-        char *obj = bass_pop(st->bass);
-        size_t len = strlen(obj);
-
-        size_t total = 8 + len;
-        char *buf = malloc(total);
-        if (!buf) {
-            free(obj);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return;
+            }
             st->http_done = true;
             return;
         }
 
-        uint64_t n64 = len;
-        memcpy(buf, &n64, 8);
-        memcpy(buf + 8, obj, len);
-        free(obj);
+        st->pending_off += n;
 
-        /* Attempt to send the whole thing */
-        ssize_t n = send(st->outfd, buf, total, MSG_NOSIGNAL);
-        if (n < 0) {
-            if (errno == EPIPE || errno == EBADF) {
-                st->http_done = true;
-            }
-            free(buf);
+        if (st->pending_off < st->pending_len) {
             return;
         }
 
-        if (n == (ssize_t)total) {
-            free(buf);
-            continue; // go to next object
-        }
 
-        /* send() returned -1 */
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            st->pending_send = buf;
-            st->pending_off = 0;
-            st->pending_len = total;
-            return;
-        }
-
-        /* real error */
-        free(buf);
-        st->http_done = true;
-        return;
+        free(st->pending_buf);
+        st->pending_buf = NULL;
+        st->pending_len = 0;
+        st->pending_off = 0;
     }
 
-    /* 3. If parser is done AND no queue items AND no pending sends → close */
-    if (st->http_done &&
-        st->bass->count == 0 &&
-        st->pending_len == 0 &&
-        !st->closed_outfd) {
+    /* 2. Read NDJSON from Bassoon */
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t got;
 
-        close(st->outfd);
+
+    while ((got = getline(&line, &cap, rd)) != -1) {
+
+        ssize_t sent = send(out, line, got, MSG_NOSIGNAL);
+
+        if (sent < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                st->pending_buf = malloc(got);
+                memcpy(st->pending_buf, line, got);
+                st->pending_len = got;
+                st->pending_off = 0;
+                free(line);
+                return;
+            }
+            st->http_done = true;
+            free(line);
+            return;
+        }
+
+        if (sent < got) {
+            size_t rem = got - sent;
+            st->pending_buf = malloc(rem);
+            memcpy(st->pending_buf, line + sent, rem);
+            st->pending_len = rem;
+            st->pending_off = 0;
+            free(line);
+            return;
+        }
+    }
+
+    free(line);
+
+    if (feof(rd) && st->http_done && st->pending_len == 0 && !st->closed_outfd) {
+        close(out);
         st->closed_outfd = true;
     }
 }
@@ -722,7 +733,11 @@ static void *fetcher(void *arg) {
     struct fetch_state *fs = arg;
     struct epoll_event events[4];
 
+    /* ---------------------------
+       1. MAIN: Read HTTP response
+       --------------------------- */
     while (!fs->http_done) {
+
         int n = epoll_wait(fs->ep, events, 4, -1);
         if (n < 0) {
             if (errno == EINTR) continue;
@@ -733,36 +748,38 @@ static void *fetcher(void *arg) {
             int fd = events[i].data.fd;
             uint32_t ev = events[i].events;
 
+            /* New data from the network */
             if (fd == fs->netfd && (ev & EPOLLIN)) {
                 if (!fs->headers_done)
                     handle_http_headers(fs);
                 else
                     handle_http_body(fs);
             }
-
-            if (fd == fs->outfd && (ev & EPOLLOUT)) {
-                flush_bassoon(fs);
-            }
         }
     }
+    fclose(fs->bass[0]);
+    fs->bass[0] = NULL;
 
-    // check once more
-    if (fs->bass->count > 0) {
-        flush_bassoon(fs);
-    }
-    // cleanup
+    /* There may still be unflushed parsed objects */
+    flush_bassoon(fs);
+
+    fclose(fs->bass[1]);
+
     if (fs->is_tls) {
         SSL_shutdown(fs->ssl);
         SSL_free(fs->ssl);
         SSL_CTX_free(fs->ssl_ctx);
     }
-    free(fs->hostname);
+
+    if (!fs->closed_outfd) {
+        close(fs->outfd);
+        fs->closed_outfd = true;
+    }
+
     close(fs->netfd);
-    close(fs->outfd);
     close(fs->ep);
 
-    fclose(fs->bass->writable);
-    bass_free(fs->bass);
+    free(fs->hostname);
     free(fs);
 
     return NULL;

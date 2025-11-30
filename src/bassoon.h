@@ -2,6 +2,14 @@
  * @file bassoon.h Bassoon JSON Queue
  * @brief A JSON deque wrapper over byte streams.
  *
+ * `bassoon.h` exports a queue pipe that connects byte stream
+ * writes into a NDJSON readable FILE end, along with
+ * the internal queue functions associated with the actual
+ * #bassoon struct.
+ *
+ * You'll probably never need to use the bassoon functions yourself,
+ * but they're exported here for debugging / testing.
+ *
  * @example examples/c/bassoon_print.c
  * Demonstrates how to use bassoon streaming JSON.
  *
@@ -15,6 +23,16 @@
 #pragma once
 
 #include <stdio.h>
+
+/**
+ * Bassoon Handle Open Pipe, or bhop, opens a unidirectional
+ * pipe where you write into `FILES[0]` and read from `FILES[1]`,
+ * just like posix pipes.
+ *
+ * @retval  0  Success. `FILES[0]` and `FILES[1]` are fully initialized.
+ * @retval -1  Error. `FILES` is left unchanged and errno is set.
+ */
+int bhop(FILE *files[2]);
 
 /**
  * A JSON object queue with a writable file descriptor. You can write 
@@ -35,21 +53,19 @@ struct bassoon {
     /** Last in end. */
     unsigned long tl;
 
-    /** Stored size. Is updated dynamically from calls to #bass_pop. */
+    /** Stored size. Is updated dynamically from calls to #bassoon_pop. */
     unsigned long count;
-
-    /** Writable end of the queue so you can just \c fwrite() on it. */
-    FILE *writable;
-
-    /** Readable end of the queue that emits NDJSON, so you get just \c getline() on it. */
-    FILE *readable;
 };
 
-/** Dynamically allocate a bassoon queue. */
-int Bassoon(FILE *files[2]);
+/** Initializes the queue at BASS. */
+void bassoon_init(struct bassoon *bass);
+
+/** Push object buffer at VAL into BASS. */
+void bassoon_push(struct bassoon *bass, char *val);
 
 /** Free the queue buffer at BASS. */
-void bass_free(struct bassoon *bass);
+void bassoon_free(struct bassoon *bass);
 
 /** Pop an object from the queue in BASS, or NULL if it's empty. */
-char *bass_pop(struct bassoon *bass);
+char *bassoon_pop(struct bassoon *bass);
+

@@ -1,21 +1,34 @@
-#include <yarts/bassoon.h>
+#include "yarts/bassoon.h"
 #include <stdlib.h>
+#include <string.h>
  
-int main() {
-    struct bassoon *bass = Bassoon();
-    const char hello[] = "[{\"hello\": \"world\"}, {\"foo\": \"bar\"}]";
-    fwrite(hello, sizeof(char), sizeof(hello), bass->writable);
-    fclose(bass->writable);
-
-    while (bass->count > 0) {
-        char *popped = bass_pop(bass);
-        printf("%s\n", popped);
-        free(popped);
+int main(void) {
+    FILE *jsonfd[2] = {0};
+    if (bhop(jsonfd)) {
+        perror("bhop()");
+        return 1;
     }
-    // Prints
-    // {"hello":"world"}
-    // {"foo": "bar"}
 
-    bass_free(bass);
+    // Write *raw* JSON bytes into the streaming parser
+    const char input[] = "[{\"hello\":\"world\"},{\"foo\":\"bar\"}]";
+    fwrite(input, 1, sizeof(input), jsonfd[0]);
+
+    // Important: closing the writable FILE* forces parser flush + EOF
+    fclose(jsonfd[0]);
+    // Now read objects back as newline-delimited JSON
+    char *line = NULL;
+    size_t cap = 0;
+    
+    printf("Bassoon output:\n");
+
+    while (getline(&line, &cap, jsonfd[1]) != -1) {
+        printf("%s", line);   // already includes '\n'
+        free(line);
+    }
+
+    fclose(jsonfd[1]);
+    // bass_free(bass);
+
     return 0;
 }
+
