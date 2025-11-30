@@ -757,6 +757,7 @@ static void *fetcher(void *arg) {
             }
         }
     }
+
     fclose(fs->bass[0]);
     fs->bass[0] = NULL;
 
@@ -764,6 +765,7 @@ static void *fetcher(void *arg) {
     flush_bassoon(fs);
 
     fclose(fs->bass[1]);
+    fs->bass[1] = NULL;
 
     if (fs->is_tls) {
         SSL_shutdown(fs->ssl);

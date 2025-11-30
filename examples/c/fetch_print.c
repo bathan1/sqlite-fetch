@@ -1,4 +1,5 @@
-#include "fetch.h"
+#define _GNU_SOURCE
+#include <yarts/fetch.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

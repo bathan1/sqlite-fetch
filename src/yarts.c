@@ -107,6 +107,39 @@ static const char *fetch_status_text(int status) {
     return "Unknown Status";
 }
 
+yyjson_doc *read_next_json_object(FILE *stream, char **errmsg) {
+    char *buf = NULL;
+    size_t cap = 0;
+
+    ssize_t n = getline(&buf, &cap, stream);
+    if (n == -1) {
+        if (errmsg) {
+            *errmsg = sqlite3_mprintf("fetch: no body");
+        }
+        free(buf);
+        return NULL;
+    }
+
+    /* Trim trailing newline ONLY — standard for NDJSON */
+    if (n > 0 && buf[n - 1] == '\n') {
+        buf[n - 1] = '\0';
+        n -= 1;
+    }
+
+    /* Parse */
+    yyjson_doc *doc = yyjson_read(buf, n, 0);
+    if (!doc) {
+        if (errmsg) {
+            *errmsg = sqlite3_mprintf("fetch: invalid json object");
+        }
+        free(buf);
+        return NULL;
+    }
+
+    free(buf);
+    return doc;
+}
+
 typedef struct {
     bool is_hidden;
 
@@ -157,8 +190,8 @@ typedef struct {
 /// Cursor
 typedef struct fetch_cursor {
     sqlite3_vtab_cursor base;
+    FILE *stream;
     unsigned int count;
-    int sockfd;
     int eof;
 
     // Completed row (a fully constructed immutable doc)
@@ -598,8 +631,8 @@ static int xClose(sqlite3_vtab_cursor *cur) {
         if (cursor->next_doc) {
             yyjson_doc_free(cursor->next_doc);
         }
-        if (cursor->sockfd > 0) {
-            close(cursor->sockfd);
+        if (cursor->stream) {
+            fclose(cursor->stream);
         }
         sqlite3_free(cur);
     }
@@ -621,35 +654,10 @@ static int xNext(sqlite3_vtab_cursor *cur0) {
         return SQLITE_ERROR;
     }
 
-    // ---------------------------------------------------------
-    // Save previous row so we can free it *after* we load next
-    // ---------------------------------------------------------
     yyjson_doc *prev = cur->next_doc;
-
-    // ---------------------------------------------------------
-    // 1. Try to get next doc immediately from clarinet queue
-    // ---------------------------------------------------------
-    size_t size = 0;
-    char *doc_text = fetch_pop(cur->sockfd, &size);
-    if (doc_text) {
-        yyjson_doc *doc = yyjson_read(doc_text, size, NULL);
-        if (!doc) {
-            cur->base.pVtab->zErrMsg =
-                sqlite3_mprintf("malformed JSON in clarinet queue");
-            return SQLITE_ERROR;
-        }
-
-        // NOW FREE the previous row
-        yyjson_doc_free(prev);
-
-        cur->next_doc = doc;
-        cur->count++;
-        return SQLITE_OK;
-    }
-
+    char *errmsg = NULL;
+    cur->next_doc = read_next_json_object(cur->stream, &errmsg);
     yyjson_doc_free(prev);
-    cur->next_doc = NULL; // So xEof knows we're done
-    println("xNext end: no more rows");
 
     return SQLITE_OK;
 }
@@ -798,25 +806,16 @@ static int xFilter(sqlite3_vtab_cursor *cur0,
     char *url = remove_all(argurl, &sz, '\'');
     if (!url) url = strdup(vtab->default_url);
 
-    Cur->sockfd = fetch(url, (fetch_init_t) {0});
+    Cur->stream = fetch(url, (fetch_init_t) {0});
     free(url);
 
-    if (Cur->sockfd < 0) {
-        cur0->pVtab->zErrMsg =
-            sqlite3_mprintf("fetch: could not connect\n");
-        Cur->eof = 1;
-        return SQLITE_ERROR;
-    }
+    char *errmsg = NULL;
+    Cur->next_doc = read_next_json_object(Cur->stream, &errmsg);
 
-    size_t first_length = 0;
-    char *popped = fetch_pop(Cur->sockfd, &first_length);
-    if (!popped) {
-        cur0->pVtab->zErrMsg =
-            sqlite3_mprintf("fetch: empty body\n");
+    if (!Cur->next_doc) {
+        cur0->pVtab->zErrMsg = errmsg;
         return SQLITE_ERROR;
     }
-    yyjson_doc *doc = yyjson_read(popped, first_length, 0);
-    Cur->next_doc = doc;
 
     println("xFilter end");
     return SQLITE_OK;
