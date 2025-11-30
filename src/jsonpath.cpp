@@ -9,16 +9,7 @@ extern "C" {
 
 using jsoncons::json;
 
-/*
- * walk:
- *   Given raw JSON text and a JSONPath expression,
- *   returns an array of JSON strings (each malloc'ed).
- *
- * Caller must:
- *   - free(each char*)
- *   - free(out_items)
- */
-int walk(
+int jsonpath_walk(
     const char *json_buf,
     const char *path,
     char ***out_items,
@@ -60,7 +51,7 @@ int walk(
     } catch (...) {
         *out_items = nullptr;
         *out_count = 0;
-        return -1;
+        return 1;
     }
 }
 
