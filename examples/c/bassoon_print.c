@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <yarts/bassoon.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,12 +10,12 @@ int main(void) {
         return 1;
     }
 
-    // Write *raw* JSON bytes into the streaming parser
     const char input[] = "[{\"hello\":\"world\"},{\"foo\":\"bar\"}]";
     fwrite(input, 1, sizeof(input), jsonfd[0]);
 
-    // Important: closing the writable FILE* forces parser flush + EOF
+    // Close write end when done.
     fclose(jsonfd[0]);
+
     // Now read objects back as newline-delimited JSON
     char *line = NULL;
     size_t cap = 0;
@@ -27,7 +28,6 @@ int main(void) {
     }
 
     fclose(jsonfd[1]);
-    // bass_free(bass);
 
     return 0;
 }

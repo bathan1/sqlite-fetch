@@ -112,7 +112,7 @@ static void flush_bassoon(struct fetch_state *st);
 
 static void *fetcher(void *arg); 
 
-FILE *fetch(const char *url, struct fetch_init init) {
+FILE *fetch(const char *url, const char *init[4]) {
     struct fetch_state *fs = calloc(1, sizeof(struct fetch_state));
     if (!fs) {
         return null(ENOMEM);
@@ -281,28 +281,6 @@ static ssize_t read_full(int fd, void *buf, size_t len) {
         off += n;
     }
     return off;
-}
-
-char *fetch_pop(int fd, size_t *length) {
-    uint64_t len = 0;
-    for (;;) {
-        ssize_t n = read_full(fd, &len, sizeof(len));
-        if (n == 0) {
-            return NULL;
-        } else if (n < 0) {continue;}
-
-        if (length) {
-            *length = len;
-        }
-        char *obj = malloc(len + 1);
-        if (!obj) {return NULL;}
-
-        ssize_t m = read_full(fd, obj, len);
-        if (m == 0) { free(obj); return NULL; }
-        if (m < 0) { free(obj); continue; }
-        obj[len] = 0;
-        return obj;
-    }
 }
 
 static char *host(struct url *url) {

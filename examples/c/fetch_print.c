@@ -5,11 +5,11 @@
 #include <string.h>
  
 int main(void) {
-    FILE *stream = fetch("http://jsonplaceholder.typicode.com/todos", (fetch_init_t) {
-        .method = "GET",
-        .frame = FRAME_JSON_OBJ,
-        .headers = 0,
-        .body = 0,
+    FILE *stream = fetch("http://jsonplaceholder.typicode.com/todos", (const char *[]) {
+        "GET", // method
+        0, // headers
+        0, // body
+        FRAME_NDJSON
     });
 
     char *line = NULL;

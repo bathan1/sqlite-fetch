@@ -6,57 +6,35 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 
-/** Set how #fetch will interpret stream bytes. */
-typedef enum {
-    /** Queues 1 top level JSON object at a time. */
-    FRAME_JSON_OBJ,
+/* FETCH FRAME OPTIONS. These are just plain integers
+ * that are statically cast to `const char *` for convenience.
+ * You can pass in plain integers to the frame slot and that will 
+ * work just fine, you will just get some compiler warnings. */
 
-    /** 
-     * "Trivial" queue frame, as this just passes through the 
-     * bytes *as-is* to the queue.
-     */
-    FRAME_TEXT
-} fetch_frame_e;
-
-/** Optional fields to write in the Request. */
-struct fetch_init {
-    /** 
-     * A *static* string to declare the HTTP method. Case insensitive.
-     * If not provided, the 'default' is assumed to be a "GET".
-     */
-    const char *method;
-
-    /** Plaintext HTTP headers. */
-    char *headers;
-    
-    /** For POST requests. */
-    char *body;
-
-    /** A #fetch_frame_e flag to determine byte enqueue strategy. */
-    int frame;
-};
-typedef struct fetch_init fetch_init_t;
+/** Default stream mode that parses JSON objects into NDJSON. */
+static const char *FRAME_NDJSON = 0;
 
 /**
  * Connects to host at URL over tcp and writes optional HTTP fields in INIT to the request.
- * It returns the socket fd *after* sending the corresponding HTTP request encoded in URL.
- */
-FILE *fetch(const char *url, struct fetch_init init);
-
-/**
- * Pop the next parser framed object from the fetch buffer at FD. If LENGTH is passed in, 
- * this sets LENGTH to the length of the bytes *not including NULL TERMINATOR*, 
- * meaning the returned char buffer has total size `LENGTH + 1`.
+ * It returns a readable FILE stream that separates the frames by newlines, so you can
+ * easily read each logical frame one by one.
  *
- * Returns NULL either on EOF.
+ * INIT slots are:
+ *  - [0]: Method case insensitive
+ *  - [1]: Headers
+ *  - [2]: Body
+ *  - [3]: *plain int* Body parser frame type.
+ *
+ * INIT[3] is the only slot that #fetch will read as a plain
+ * `uint64`.
  */
-char *fetch_pop(int fd, size_t *length);
-
+FILE *fetch(const char *url, const char *init[4]);
 
 static char *append(char **bufptr, size_t len) {
     char *buf = *bufptr;

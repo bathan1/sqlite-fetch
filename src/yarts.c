@@ -806,7 +806,7 @@ static int xFilter(sqlite3_vtab_cursor *cur0,
     char *url = remove_all(argurl, &sz, '\'');
     if (!url) url = strdup(vtab->default_url);
 
-    Cur->stream = fetch(url, (fetch_init_t) {0});
+    Cur->stream = fetch(url, (const char *[]){0});
     free(url);
 
     char *errmsg = NULL;
