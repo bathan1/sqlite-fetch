@@ -86,7 +86,7 @@ const config: Config = {
           label: 'Tutorial',
         },
         {to: '/blog', label: 'Blog', position: 'left'},
-        {href: "https://bathan1.github.io/yarts", label: "API reference", position: "left"},
+        {href: "https://bathan1.github.io/yarts/index.html", label: "API reference", position: "left"},
         {
           href: "https://github.com/bathan1/yarts",
           label: 'GitHub',
