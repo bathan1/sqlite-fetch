@@ -1,32 +1,13 @@
 /**
- * @file fetch.h
+ * @file helpers.fetch.h
  * @brief Simplified [Web Fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) implementation for C.
- *
- * @example examples/c/fetch_print.c
- * Demonstrates how to stream JSON with fetch.
- *
- * Compile with:
- * ```bash
- * gcc fetch_print.c -lyarts
- * ```
- *
- * See the [README](README.md) on installing onto the usr lib.
  */
 
 #pragma once
 #include "helpers.prefix.h"
-#include <fcntl.h>
 #include <openssl/types.h>
-
-#include <netdb.h>
-#include <ctype.h>
 #include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdarg.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 /**
  * Taken from Web API URL, word 4 word, bar 4 bar.

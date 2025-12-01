@@ -1,5 +1,5 @@
 #include "helpers.prefix.h"
-#include "helpers.errors.h"
+#include <errno.h>
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -37,6 +37,7 @@ prefixed *prefix(const char *fmt, ...) {
     va_end(ap);
 
     if (needed < 0) {
+        errno = EINVAL;
         va_end(ap2);
         return NULL;
     }
@@ -49,6 +50,7 @@ prefixed *prefix(const char *fmt, ...) {
 
     char *p = (char *) calloc(1, total);
     if (!p) {
+        errno = ENOMEM;
         va_end(ap2);
         return NULL;
     }
@@ -122,13 +124,15 @@ prefixed **split_on_ch(const char *str, char delim, size_t *token_count) {
             if (p - start <= 0) {
                 for (int i = 0; i < idx; i++) free(result[i]);
                 free(result);
-                return null(ENOMEM);
+                errno = ENOMEM;
+                return NULL;
             }
             char *token = prefix_static(start, p - start);
             if (!token) { // bail
                 for (int i = 0; i < idx; i++) free(result[i]);
                 free(result);
-                return null(ENOMEM);
+                errno = ENOMEM;
+                return NULL;
             }
             result[idx++] = token;
 

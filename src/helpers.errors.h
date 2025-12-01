@@ -1,6 +1,6 @@
 /**
- * @file common.h YARTS utilities.
- * @brief Reusable helpers for the main API interface.
+ * @file helpers.errors.h YARTS utilities.
+ * @brief Error return helpers.
  */
 #pragma once
 

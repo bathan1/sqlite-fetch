@@ -1,3 +1,4 @@
+//! [fetch basic usage]
 #define _GNU_SOURCE
 #include <yarts.h>
 #include <stdio.h>
@@ -5,12 +6,7 @@
 #include <string.h>
 
 int main(void) {
-    FILE *stream = fetch("http://jsonplaceholder.typicode.com/todos", (const char *[]) {
-        "GET", // method
-        0, // headers
-        0, // body
-        FRAME_NDJSON
-    });
+    FILE *stream = fetch("https://jsonplaceholder.typicode.com/todos", 0);
 
     char *line = NULL;
     size_t cap = 0;
@@ -24,3 +20,4 @@ int main(void) {
 
     return 0;
 }
+//! [fetch basic usage]

@@ -2,7 +2,14 @@
  * @file yarts.h
  * @brief Yet Another Runtime TCP Stream
  *
- * Exposes both the SQLite extension loader and main networking functions.
+ * Exposes both the SQLite extension loader and primary networking functions.
+ * See the [README](README.md) on installing onto the usr lib.
+ *
+ * @example bassoon_print.c
+ * `gcc bassoon_print.c -lyarts -o bassoon_print`
+ *
+ * @example fetch_print.c
+ * `gcc fetch_print.c -lyarts -o fetch_print`
  */
 
  #include <stdio.h>
@@ -27,6 +34,9 @@ static const char *FRAME_NDJSON = 0;
  *
  * @retval  0  Success. `FILES[0]` and `FILES[1]` are fully initialized.
  * @retval -1  Error. `FILES` is left unchanged and errno is set.
+ *
+ * ### Example with manual JSON
+ * @snippet bassoon_print.c bhop basic usage
  */
 int bhop(FILE *files[2]);
 
@@ -47,13 +57,21 @@ int bhop(FILE *files[2]);
  * INIT[3] is the only slot that #fetch will read as a plain
  * `uint64`.
  *
- * @retval ~0 OK - Anything not 0 means the response stream was successfully opened.
+ * @retval NOT_0 OK - Anything not 0 means the response stream was successfully opened.
  * @retval NULL Error - Check `errno` to learn about the error (too many to list here).
+ *
+ * ### Typicode API Example
+ * @snippet fetch_print.c fetch basic usage
  */
 FILE *fetch(const char *url, const char *init[4]);
 
 struct sqlite3;
 struct sqlite3_api_routines;
 
+/**
+ * @brief YARTS entry point into SQLite for database DB.
+ *
+ * Registers the `Fetch` Virtual Table against the database DB.
+ */
 int sqlite3_yarts_init(struct sqlite3 *db, char **pzErrMsg,
                         const struct sqlite3_api_routines *pApi);

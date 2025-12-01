@@ -1,7 +1,6 @@
 /**
  * @file helpers.h
- * @brief Reusable helper functions for the public interface.
-          These are primarily wrappers over the POSIX APIs.
+ * @brief "Internal" reusable wrapper functions for the public interface.
  */
 
 #include "helpers.prefix.h"

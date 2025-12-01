@@ -1,3 +1,4 @@
+//! [bhop basic usage]
 #define _GNU_SOURCE
 #include <yarts.h>
 #include <stdlib.h>
@@ -31,3 +32,4 @@ int main(void) {
 
     return 0;
 }
+//! [bhop basic usage]

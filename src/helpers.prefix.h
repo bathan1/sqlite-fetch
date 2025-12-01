@@ -1,3 +1,10 @@
+/**
+ * @file helpers.prefix.h
+ * @brief Hack string in C
+ *
+ * Primary motivation behind this is to be able to lookup length
+ * in constant time after computing \c strlen() on it once.
+ */
 #include <stddef.h>
 
 /**
@@ -22,14 +29,29 @@ typedef char prefixed;
 
 /**
  * @brief Allocate a prefixed string S of known length LEN.
+ *
+ * *Copies* S, so you can free S after this.
+ *
+ * @retval SOME_BUFFER OK. Wrote out successfully.
+ * @retval NULL When out of memory
+ *
+ * # Errors
+ * - `ENOMEM` - Out of memory.
  */
 prefixed *prefix_static(const char *s, size_t len);
 
 /**
  * @brief Allocate a prefixed string with the given format string FMT.
  *
- * Like \c sprintf() except that it *returns* the buffer rather than making you pass it in.
+ * It's like \c sprintf() except that it *returns* the buffer rather than making you pass it in.
  * FMT can be freed after this.
+ *
+ * @retval SOME_BUFFER OK. Wrote out successfully.
+ * @retval NULL Out of heap memory.
+ *
+ * # Errors
+ * - `EINVAL` - Malformed format string FMT.
+ * - `ENOMEM` - Out of memory.
  */
 prefixed *prefix(const char *fmt, ...);
 
@@ -37,6 +59,8 @@ prefixed *prefix(const char *fmt, ...);
  * Returns a *new* string with CH removed from *length prefixed* STR,
  * Sets N to the new size if it is passed in. Otherwise, it will
  * compute `strlen` on STR to handle the removal.
+ *
+ * @retval SOME_BUFFER OK.
  */
 prefixed *remove_all(const prefixed *str, char ch);
 /**

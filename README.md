@@ -49,11 +49,21 @@ sudo make install
 sudo make uninstall
 ```
 
-To run the test script:
+To run the test script, make sure you have the binary built at the project root.
+Then you can run the npm script:
 
 ```bash
 pnpm run test
 ```
+
+## Library
+The primary file is [yarts.h](./src/yarts.h), which defines the
+SQLite loader function `sqlite3_yarts_init` **and** the networking
+functions the extension uses itself.
+
+The majority of the code is under the `helper.*.c` files, which is only
+exposed to the [yarts.c](./src/yarts.c) file so that it doesn't pollute
+the yarts "public" API.
 
 ## Documentation
 This project uses [Doxygen](https://www.doxygen.nl/) for code documentation

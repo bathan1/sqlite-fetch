@@ -9,15 +9,6 @@
  * You'll probably never need to use the bassoon functions yourself,
  * but they're exported here for debugging / testing.
  *
- * @example examples/c/bassoon_print.c
- * Demonstrates how to use bassoon streaming JSON.
- *
- * Compile with:
- * ```bash
- * gcc bassoon_print.c -lyarts
- * ```
- *
- * See the [README](README.md) on installing onto the usr lib.
  */
 #pragma once
 
