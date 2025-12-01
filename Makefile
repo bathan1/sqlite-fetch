@@ -34,15 +34,13 @@ $(TARGET): $(OBJ)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # ---- Install / Uninstall ----
-
 install: $(TARGET)
 	@echo "Installing $(TARGET) to $(LIBDIR)"
 	mkdir -p $(LIBDIR)
 	install -m 755 $(TARGET) $(LIBDIR)
 
-	@echo "Installing headers to $(INCLUDEDIR)"
-	mkdir -p $(INCLUDEDIR)
-	install -m 644 src/*.h $(INCLUDEDIR)
+	@echo "Installing public header yarts.h to $(PREFIX)/include"
+	install -m 644 src/yarts.h $(PREFIX)/include/yarts.h
 
 ifeq ($(UNAME_S),Linux)
 	@echo "Updating ldconfig cache"
@@ -55,8 +53,8 @@ uninstall:
 	@echo "Removing library from $(LIBDIR)"
 	rm -f $(LIBDIR)/$(TARGET)
 
-	@echo "Removing headers from $(INCLUDEDIR)"
-	rm -rf $(INCLUDEDIR)
+	@echo "Removing header from $(PREFIX)/include"
+	rm -f $(PREFIX)/include/yarts.h
 
 ifeq ($(UNAME_S),Linux)
 	@echo "Updating ldconfig cache"

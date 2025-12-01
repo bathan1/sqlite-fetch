@@ -1,8 +1,8 @@
 #define _GNU_SOURCE
-#include <yarts/bassoon.h>
+#include <yarts/yarts.h>
 #include <stdlib.h>
 #include <string.h>
- 
+
 int main(void) {
     FILE *jsonfd[2] = {0};
     if (bhop(jsonfd)) {
@@ -19,7 +19,7 @@ int main(void) {
     // Now read objects back as newline-delimited JSON
     char *line = NULL;
     size_t cap = 0;
-    
+
     printf("Bassoon output:\n");
 
     while (getline(&line, &cap, jsonfd[1]) != -1) {
@@ -31,4 +31,3 @@ int main(void) {
 
     return 0;
 }
-
