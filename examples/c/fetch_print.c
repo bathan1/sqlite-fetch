@@ -1,9 +1,9 @@
 #define _GNU_SOURCE
-#include <yarts/fetch.h>
+#include <yarts.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
- 
+
 int main(void) {
     FILE *stream = fetch("http://jsonplaceholder.typicode.com/todos", (const char *[]) {
         "GET", // method
@@ -24,4 +24,3 @@ int main(void) {
 
     return 0;
 }
-

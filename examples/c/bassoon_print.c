@@ -1,5 +1,5 @@
 #define _GNU_SOURCE
-#include <yarts/yarts.h>
+#include <yarts.h>
 #include <stdlib.h>
 #include <string.h>
 

@@ -39,6 +39,7 @@ void dispatch_free(struct dispatch *dispatch) {
         freeaddrinfo(dispatch->addrinfo);
         dispatch->addrinfo = NULL;
     }
+    free(dispatch);
     // if (dispatch->ssl || dispatch->ctx) {
     //     tls_free(dispatch->ssl, dispatch->ctx);
     // }
@@ -67,6 +68,9 @@ struct dispatch *fetch_socket(const char *url, const char *init[4]) {
         dispatch_free(disp);
         return null(EINVAL);
     }
+    // just free the head, we need to keep the values alive
+    // in dispatch
+    free(URL);
     return disp;
 }
 
