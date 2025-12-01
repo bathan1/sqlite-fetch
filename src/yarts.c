@@ -1,13 +1,14 @@
 // Copyright 2025 Nathanael Oh. All Rights Reserved.
-#include "common.h"
 #include <sqlite3ext.h>
-#include <unistd.h>
 SQLITE_EXTENSION_INIT1
 
 // uncomment to remove all debug prints
 #define NDEBUG
 #include <assert.h>
-
+#include <asm-generic/errno.h>
+#include <errno.h>
+#include <unistd.h>
+#include <openssl/types.h>
 #include <yyjson.h>
 #include <curl/curl.h>
 #include <stdbool.h>
@@ -18,7 +19,8 @@ SQLITE_EXTENSION_INIT1
 #include <wchar.h>
 
 /* utils */
-#include "fetch.h"
+#include "helpers.h"
+#include "yarts.h"
 
 #ifndef MIN
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
@@ -141,17 +143,13 @@ yyjson_doc *read_next_json_object(FILE *stream, char **errmsg) {
 }
 
 typedef struct {
-    bool is_hidden;
+    prefixed *name;
+    prefixed *typename;
 
-    size_t generated_always_as_size;
-    size_t *generated_always_as_len;
-    char **generated_always_as;
+    prefixed *default_value;
 
-    size_t name_len;
-    char *name;
-
-    size_t typename_len;
-    char *typename;
+    prefixed **generated_always_as;
+    size_t generated_always_as_len;
 
 } column_def;
 
@@ -169,20 +167,13 @@ typedef struct {
      */
     column_def **columns;
 
-    /** 
+    /**
      * Number of COLUMNS entries
      * */
-    unsigned long columns_len;
-
-    size_t default_url_len;
+    size_t columns_len;
 
     /**
-     * A default url if one was set
-     */
-    char *default_url;
-
-    /**
-     * Resolved schema string. 
+     * Resolved schema string.
      */
     char *schema;
 } Fetch;
@@ -212,7 +203,7 @@ static bool is_key_body(char *key) {
 // at least 1 argument for the url argument
 #define MIN_ARGC 4
 
-// "fetch", "{schema}", "{vtable_name}", "{?url}", "{?body}", 
+// "fetch", "{schema}", "{vtable_name}", "{?url}", "{?body}",
 // "{?headers}", ... optional static column declarations
 #define MAX_FETCH_ARGC 6
 
@@ -256,99 +247,217 @@ enum {
     COL_GEN_CST_VAL
 };
 
-column_def **init_columns(int argc, const char *const *argv) {
-
-    bool has_url_column = false;
-
-    for (int i = FETCH_ARGS_OFFSET; i < argc; i++) {
-        // argv[i] is one column definition
-        const char *arg = argv[i];
-        int tokens_size = 0;
-        int token_len[8];
-        char **tokens = split(arg, ' ', &tokens_size, token_len);
-
-        if (tokens_size > 0 &&
-            token_len[COL_NAME] == 3 &&
-            strncmp(tokens[COL_NAME], "url", 3) == 0) {
-            has_url_column = true;
-        }
-
-        for (int t = 0; t < tokens_size; t++) free(tokens[t]);
-        free(tokens);
-    }
-
-    int num_columns = (argc - FETCH_ARGS_OFFSET)
-                      + (!has_url_column ? 1 : 0);
-
-    column_def **columns = malloc(sizeof(column_def*) * num_columns);
-
-    // index 0 is always url
-    column_def *url = calloc(1, sizeof(column_def));
-    url->is_hidden = true;
-    url->name = strdup("url");
-    url->name_len = 3;
-    url->typename = strdup("text");
-    url->typename_len = 4;
-    columns[0] = url;
-
-    return columns;
-}
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
 
 static void split_generated_path(
-    const char *expr,
-    size_t expr_len,
-    char ***out_parts,
-    size_t **out_lens,
+    const prefixed *expr,
+    prefixed ***out_parts,
     size_t *out_count
 ) {
-    // 1. Count segments
+    /* Length *excluding* prefix */
+    size_t expr_len = len(expr);
+
+    /* ------------------------------------------------------
+       1. Count number of segments split by "->"
+       ------------------------------------------------------ */
     size_t count = 1;
     for (size_t i = 0; i + 1 < expr_len; i++) {
-        if (expr[i] == '-' && expr[i+1] == '>') {
+        if (str(expr)[i] == '-' && str(expr)[i+1] == '>') {
             count++;
         }
     }
 
-    char **parts = malloc(sizeof(char*) * count);
-    size_t *lens = malloc(sizeof(size_t) * count);
+    /* Allocate array of prefixed* */
+    prefixed **parts = malloc(sizeof(prefixed*) * count);
+    if (!parts) {
+        errno = ENOMEM;
+        *out_parts = NULL;
+        *out_count = 0;
+        return;
+    }
 
+    /* ------------------------------------------------------
+       2. Extract each segment into a NEW prefixed string
+       ------------------------------------------------------ */
     size_t start = 0;
     size_t idx = 0;
+    const char *s = str(expr); /* raw char* payload */
 
     for (size_t i = 0; i <= expr_len; i++) {
+
         bool at_arrow =
-            (i + 1 < expr_len && expr[i] == '-' && expr[i+1] == '>');
+            (i + 1 < expr_len && s[i] == '-' && s[i+1] == '>');
         bool at_end = (i == expr_len);
 
         if (at_arrow || at_end) {
+
             size_t seg_len = i - start;
 
-            //
-            // First strip *quotes*
-            //
-            char *tmp = remove_all(expr + start, &seg_len, '\'');
+            /* --------------------------------------------
+               2A. Copy substring into its own prefixed str
+               -------------------------------------------- */
+            prefixed *token = prefix_static(s + start, seg_len);
+            if (!token) {
+                errno = ENOMEM;
+                /* cleanup partial results */
+                for (size_t k = 0; k < idx; k++) free(parts[k]);
+                free(parts);
+                *out_parts = NULL;
+                *out_count = 0;
+                return;
+            }
 
-            //
-            // Then strip newlines and carriage returns
-            //
-            size_t cleaned_len = seg_len;
-            tmp = remove_all(tmp, &cleaned_len, '\n');
-            tmp = remove_all(tmp, &cleaned_len, '\r');
+            /* --------------------------------------------
+               2B. Clean it with remove_all()
+               remove_all() always returns a NEW buffer.
+               -------------------------------------------- */
+            prefixed *clean1 = remove_all(token, '\'');
+            free(token);
+            token = clean1;
 
-            parts[idx] = tmp;
-            lens[idx] = cleaned_len;
-            idx++;
+            prefixed *clean2 = remove_all(token, '\n');
+            free(token);
+            token = clean2;
 
+            prefixed *clean3 = remove_all(token, '\r');
+            free(token);
+            token = clean3;
+
+            parts[idx++] = token;
+
+            /* Advance past "->" */
             if (at_arrow) {
-                i++;
+                i++;        /* skip '>' */
                 start = i + 1;
             }
         }
     }
 
     *out_parts = parts;
-    *out_lens = lens;
     *out_count = count;
+}
+
+column_def **init_columns(int argc, const char *const *argv, size_t *num_columns) {
+    column_def *columns[64 + 3] = {0};
+    // columns always has [URL, HEADERS, BODY] at start
+    size_t col_index = 3;
+
+    for (int i = FETCH_ARGS_OFFSET; i < argc; i++) {
+        bool is_url_column = false;
+        bool has_default = false;
+        bool has_generated_value = false;
+        // argv[i] is one column definition
+        const char *arg = argv[i];
+
+        size_t tokens_size = 0;
+        prefixed **tokens = split_on_ch(arg, ' ', &tokens_size);
+        if (!tokens) {
+            return null(ENOMEM);
+        }
+
+        if (tokens_size > 0 &&
+            len(tokens[COL_NAME]) == 3 &&
+            strncmp(str(tokens[COL_NAME]), "url", 3) == 0)
+        {
+            is_url_column = true;
+        }
+
+        if (tokens_size >= 3 &&
+            len(tokens[COL_CST]) == 7 &&
+                strncmp(str(tokens[COL_CST]), "default", 7) == 0)
+        {
+            if (tokens_size != 4) {
+                if (tokens_size < 4) {
+                    fprintf(stderr, "Default value missing for column %s\n", str(tokens[COL_NAME]));
+                } else {
+                    fprintf(stderr, "Too many arguments for default value of column %s\n", str(tokens[COL_NAME]));
+                }
+                for (int t = 0; t < tokens_size; t++) free(tokens[t]);
+                free(tokens);
+                return null(EINVAL);
+            }
+            has_default = true;
+        }
+
+        if (
+            tokens_size >= 3 &&
+            len(tokens[COL_CST]) == 9 &&
+            strncmp(str(tokens[COL_CST]), "generated", 9) == 0
+            &&
+            len(tokens[COL_CST_VAL]) == 6 &&
+            strncmp(str(tokens[COL_CST_VAL]), "always", 6) == 0
+            &&
+            len(tokens[COL_CST_VAL2]) == 2 &&
+            strncmp(str(tokens[COL_CST_VAL2]), "as", 2) == 0
+            &&
+            len(tokens[COL_GEN_CST_VAL]) > 0
+        ) {
+            has_generated_value = true;
+        }
+
+        size_t i = is_url_column ? 0 : col_index;
+
+        columns[i] = calloc(1, sizeof(column_def));
+        if (!columns[i]) {
+            for (int t = 0; t < tokens_size; t++) free(tokens[t]);
+            free(tokens);
+            return null(ENOMEM);
+        }
+
+        columns[i]->name = tokens[COL_NAME];
+        columns[i]->typename = tokens[COL_TYPE];
+        if (has_default) {
+            prefixed *normalized = remove_all(tokens[COL_CST_VAL], '\'');
+            free(tokens[COL_CST_VAL]); // don't need anymore
+            columns[i]->default_value = normalized;
+        }
+        if (has_generated_value) {
+            char *expr_raw = str(tokens[COL_GEN_CST_VAL]);
+            size_t expr_len = len(tokens[COL_GEN_CST_VAL]);
+            if (expr_len >= 2 && expr_raw[0] == '(' && expr_raw[expr_len - 1] == ')') {
+                expr_raw++;           // move start
+                expr_len -= 2;        // remove both '(' and ')'
+            }
+
+            prefixed *expr = prefix_static(expr_raw, expr_len);
+            char **parts = 0;
+            size_t count = 0;
+
+            split_generated_path(expr, &parts, &count);
+
+            columns[i]->generated_always_as = parts;
+            columns[i]->generated_always_as_len = count;
+
+            free(expr);
+        }
+
+        // if we're at url, then we wrote to index 0, so we DON'T increment index counter
+        col_index = is_url_column ? col_index : col_index + 1;
+    }
+
+    if (columns[0] == NULL) {
+        columns[0] = calloc(1, sizeof(column_def));
+        // then we write url col in ourselves
+        columns[0]->name = prefix_static("url", 3);
+        columns[0]->typename = prefix_static("text", 4);
+    }
+    if (columns[1] == NULL) {
+        columns[1] = calloc(1, sizeof(column_def));
+        columns[1]->name = prefix_static("headers", 7);
+        columns[1]->typename = prefix_static("text", 4);
+    }
+    if (columns[2] == NULL) {
+        columns[2] = calloc(1, sizeof(column_def));
+        columns[2]->name = prefix_static("body", 4);
+        columns[2]->typename = prefix_static("text", 4);
+    }
+
+    column_def **heap_columns = calloc(1, sizeof(column_def) * col_index);
+    memcpy(heap_columns, columns, sizeof(column_def) * col_index);
+    if (num_columns) *num_columns = col_index;
+    return heap_columns;
 }
 
 static Fetch *fetch_alloc(sqlite3 *db, int argc,
@@ -360,86 +469,20 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
         return NULL;
     }
     memset(vtab, 0, sizeof(Fetch));
-    vtab->columns = init_columns(argc, argv);
-
-    int index = 1;
-    for (int i = FETCH_ARGS_OFFSET; i < argc; i++) {
-        const char *arg = argv[i];
-        int tokens_size = 0;
-        int token_len[6] = {0};
-        char **token = split(arg, ' ', &tokens_size, token_len);
-        for (int i = 1; i < tokens_size - 1; i++) {
-            char *prev = token[i];
-            token[i] = to_lower(prev, token_len[i]);
-            free(prev);
-        }
-        if (
-            token_len[COL_NAME] == 3 &&
-            strncmp(token[COL_NAME], "url", 3) == 0
-            &&
-            token_len[COL_CST] == 7 && 
-            strncmp(token[COL_CST], "default", 7) == 0
-        ) {
-            vtab->default_url_len = token_len[COL_CST_VAL];
-            vtab->default_url = remove_all(token[COL_CST_VAL], &vtab->default_url_len, '\'');
-            continue;
-        }
-
-        normalize_column_name(token[COL_NAME], &token_len[COL_NAME]);
-        column_def *def = calloc(1, sizeof(column_def));
-        def->name = token[COL_NAME];
-        def->name_len = token_len[COL_NAME];
-        def->typename = token[COL_TYPE];
-        def->typename_len = token_len[COL_TYPE];
-
-        if (
-            token_len[COL_CST] == 9 &&
-            strncmp(token[COL_CST], "generated", 9) == 0
-            &&
-            token_len[COL_CST_VAL] == 6 &&
-            strncmp(token[COL_CST_VAL], "always", 6) == 0
-            &&
-            token_len[COL_CST_VAL2] == 2 &&
-            strncmp(token[COL_CST_VAL2], "as", 2) == 0
-            &&
-            token_len[COL_GEN_CST_VAL] > 0
-        ) {
-            char *expr_raw = token[COL_GEN_CST_VAL];
-            size_t expr_len = token_len[COL_GEN_CST_VAL];
-            if (expr_len >= 2 && expr_raw[0] == '(' && expr_raw[expr_len - 1] == ')') {
-                expr_raw++;           // move start
-                expr_len -= 2;        // remove both '(' and ')'
-            }
-
-            /* make a real owned copy */
-            char *expr = malloc(expr_len + 1);
-            memcpy(expr, expr_raw, expr_len);
-            expr[expr_len] = '\0';
-
-            char **parts;
-            size_t *lens;
-            size_t count;
-
-            split_generated_path(expr, expr_len, &parts, &lens, &count);
-
-            def->generated_always_as = parts;
-            def->generated_always_as_len = lens;
-            def->generated_always_as_size = count;
-        }
-
-        vtab->columns[index++] = def;
-    }
-    vtab->columns_len = index;
+    vtab->columns = init_columns(argc, argv, &vtab->columns_len);
 
     /* max number of tokens valid inside a single xCreate argument for the table declaration */
     int MAX_ARG_TOKENS = 2;
     const char *table_name = argv[2];
-    char *first_line = string("CREATE TABLE %s(url hidden text,", table_name);
+    char *first_line = prefix("CREATE TABLE %s(url hidden text,headers hidden text,body hidden text,", table_name);
     sqlite3_str *s = sqlite3_str_new(db);
     sqlite3_str_appendall(s, first_line + sizeof(size_t));
-    for (int i = 1; i < vtab->columns_len; i++) {
+    for (int i = 3; i < vtab->columns_len; i++) {
         column_def *def = vtab->columns[i];
-        sqlite3_str_appendf(s, "%s %s", def->name, def->typename);
+        char *name = str(def->name);
+        char *typename = str(def->typename);
+        printf("name=%s, typename=%s\n", name, typename);
+        sqlite3_str_appendf(s, "%s %s", str(def->name), str(def->typename));
 
         if (i + 1 < vtab->columns_len)
             sqlite3_str_appendall(s, ",");
@@ -456,6 +499,7 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
 static int xConnect(sqlite3 *pdb, void *paux, int argc,
                      const char *const *argv, sqlite3_vtab **pp_vtab,
                      char **pz_err) {
+    println("xConnect begin, argc = %d\n", argc);
     if (argc < MIN_ARGC) {
         fprintf(stderr, "Expected %d args but got %d args\n", MIN_ARGC, argc);
         return SQLITE_ERROR;
@@ -463,18 +507,19 @@ static int xConnect(sqlite3 *pdb, void *paux, int argc,
     int rc = SQLITE_OK;
     *pp_vtab = (sqlite3_vtab *) fetch_alloc(pdb, argc, argv);
     Fetch *vtab = (Fetch *) *pp_vtab;
-    if (!vtab) { 
+    if (!vtab) {
         return SQLITE_NOMEM;
     }
 
     rc += sqlite3_declare_vtab(pdb, vtab->schema);
+    println("xConnect end for table:\n%s\n", vtab->schema);
     return rc;
 }
 
 static int xCreate(sqlite3 *pdb, void *paux, int argc,
                      const char *const *argv, sqlite3_vtab **pp_vtab,
                      char **pz_err) {
-    // same implementation as xConnect, we just 
+    // same implementation as xConnect, we just
     // have to point to different fns so this isn't eponymous (can't be called
     // as its own table e.g. SELECT * FROM fetch)
     return xConnect(pdb, paux, argc, argv, pp_vtab, pz_err);
@@ -518,7 +563,7 @@ static int check_plan_mask(struct sqlite3_index_info *index_info,
 
     if (!is_url_eq_cst) {
         Fetch *vtab = (void *) pVtab;
-        if (!vtab->default_url || vtab->default_url_len == 0) {
+        if (!vtab->columns[FETCH_URL]->default_value) {
             pVtab->zErrMsg = sqlite3_mprintf(
                 "fetch SELECT needs a `WHERE url = 'something'` clause when no default url is set.\n");
             return SQLITE_ERROR;
@@ -580,12 +625,6 @@ static int xDisconnect(sqlite3_vtab *pvtab) {
     free(vtab->columns);
     vtab->columns = 0;
     vtab->columns_len = 0;
-
-    if (vtab->default_url_len > 0 && vtab->default_url) {
-        free(vtab->default_url);
-        vtab->default_url_len = 0;
-        vtab->default_url = 0;
-    }
 
     sqlite3_free(vtab->schema);
     sqlite3_free(pvtab);
@@ -663,19 +702,23 @@ static void json_bool_result(
 
 static yyjson_val *follow_generated_path(
     yyjson_val *root,
-    char **keys,
-    size_t *lens,
+    prefixed **keys,
     size_t count
 ) {
     yyjson_val *cur = root;
 
     for (size_t i = 0; i < count; i++) {
+
         if (!cur || yyjson_get_type(cur) != YYJSON_TYPE_OBJ) {
             return NULL;
         }
 
-        // keys[i] is already null-terminated
-        cur = yyjson_obj_getn(cur, keys[i], lens[i]);
+        /* Access raw chars + length from prefixed API */
+        const char *key_raw = str(keys[i]);
+        size_t key_len = len(keys[i]);
+
+        /* Pass exact byte count to yyjson */
+        cur = yyjson_obj_getn(cur, key_raw, key_len);
     }
 
     return cur;
@@ -696,22 +739,21 @@ static int xColumn(sqlite3_vtab_cursor *pcursor,
         return SQLITE_ERROR;
     }
 
-    column_def *def = vtab->columns[icol];
-
-    if (def->is_hidden) {
+    if (icol < 3) {
+        // Skip hidden columns
         return SQLITE_OK;
     }
 
+    column_def *def = vtab->columns[icol];
     yyjson_val *val = yyjson_doc_get_root(cursor->next_doc);
 
-    if (def->generated_always_as_size > 0) {
+    if (def->generated_always_as_len > 0) {
         val = follow_generated_path(
             val,
             def->generated_always_as,
-            def->generated_always_as_len,
-            def->generated_always_as_size);
+            def->generated_always_as_len);
     } else {
-        val = yyjson_obj_getn(val, def->name, def->name_len);
+        val = yyjson_obj_getn(val, str(def->name), len(def->name));
     }
 
     if (!val) {
@@ -779,22 +821,17 @@ static int xFilter(sqlite3_vtab_cursor *cur0,
     Cur->next_doc  = NULL;
 
     // Extract URL
-    if (argc + vtab->default_url_len == 0) {
+    if (argc == 0 && !vtab->columns[FETCH_URL]->default_value) {
         cur0->pVtab->zErrMsg =
             sqlite3_mprintf("fetch: need at least 1 argument or default url");
         return SQLITE_ERROR;
     }
 
-    const char *argurl = (argc > 0)
-        ? (const char*)sqlite3_value_text(argv[0])
-        : vtab->default_url;
-
-    size_t sz = strlen(argurl);
-    char *url = remove_all(argurl, &sz, '\'');
-    if (!url) url = strdup(vtab->default_url);
+    char *url = (argc > 0)
+        ? (char*)sqlite3_value_text(argv[0])
+        : str(vtab->columns[FETCH_URL]->default_value);
 
     Cur->stream = fetch(url, (const char *[]){0});
-    free(url);
 
     char *errmsg = NULL;
     Cur->next_doc = read_next_json_object(Cur->stream, &errmsg);
@@ -837,4 +874,90 @@ int sqlite3_yarts_init(sqlite3 *db, char **pzErrMsg,
     // oh yeah baby
     int rc = sqlite3_create_module(db, "fetch", &fetch_vtab_module, 0);
     return rc;
+}
+
+int bhop(FILE *files[2]) {
+    struct bassoon *bass = calloc(1, sizeof(struct bassoon));
+    if (!bass) {
+        bassoon_free(bass);
+        return one(ENOMEM);
+    }
+    bassoon_init(bass);
+
+    FILE *writable = bhop_writable(bass);
+    if (!writable) {
+        perror("open_writable");
+        bassoon_free(bass);
+        return one(ENOMEM);
+    }
+    FILE *readable = bhop_readable(bass);
+    if (!readable) {
+        perror("open_readable");
+        bassoon_free(bass);
+        return one(ENOMEM);
+    }
+
+    files[0] = writable;
+    files[1] = readable;
+    return 0;
+}
+
+FILE *fetch(const char *url, const char *init[4]) {
+    int fds[4] = {0};
+    struct dispatch *dispatch = fetch_socket(url, init);
+    if (!dispatch) {
+        perror("fetch_socket()");
+        return NULL;
+    }
+    char *hostname = strdup(str(dispatch->url.hostname));
+    int rc = use_fetch(fds, dispatch);
+    if (rc != 0) {
+        perror("use_fetch()");
+        return NULL;
+    }
+    struct fetch_state *fs = calloc(1, sizeof(struct fetch_state));
+    if (!fs) {
+        perror("calloc()");
+        return NULL;
+    }
+
+    fs->ssl = dispatch->ssl;
+    fs->ssl_ctx = dispatch->ctx;
+    fs->netfd = fds[0];
+    int appfd = fds[1];
+    fs->outfd = fds[2];
+    fs->ep = fds[3];
+    fs->headers_done = false;
+    fs->header_len = 0;
+    fs->hostname = hostname;
+
+    // Initialize body parsing state
+    fs->chunked_mode = false;
+    fs->current_chunk_size = 0;
+    fs->reading_chunk_size = true;
+    fs->chunk_line_len = 0;
+
+    if (bhop(fs->bass)) {
+        perror("bhop()");
+        close(appfd);
+        return NULL;
+    }
+
+    fs->http_done = false;
+
+    // spawn background worker thread
+    pthread_t tid;
+    pthread_create(&tid, NULL, fetcher, fs);
+
+    // detach so it cleans up after finishing
+    pthread_detach(tid);
+
+    FILE *fetchfile = fdopen(appfd, "r");
+    if (!fetchfile) {
+        perror("fdopen()");
+        close(appfd);
+        return NULL;
+    }
+    dispatch_free(dispatch);
+    return fetchfile;
 }

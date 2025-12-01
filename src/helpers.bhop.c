@@ -1,9 +1,10 @@
+#include <stdlib.h>
 #define _GNU_SOURCE
 #include <yyjson.h>
 #include <yajl/yajl_parse.h>
-#include "common.h"
-#include "bassoon.h"
 
+#include "helpers.bassoon.h"
+#include "helpers.errors.h"
 
 #ifndef MAX
 #define MAX(a, b) (a > b ? a : b)
@@ -34,38 +35,108 @@ struct bassoon_state {
     unsigned int pp_flags;
 };
 
-void bassoon_init(struct bassoon *bass) {
-    bass->cap = 8;
-    bass->buffer = calloc(bass->cap, sizeof(char *));
-    bass->hd = bass->tl = bass->count = 0;
+/** YAJL parser callbacks */
+static yajl_callbacks callbacks;
+/** Close write end @ COOKIE. */
+static ssize_t bhop_fwrite(void *cookie, const char *buf, size_t size);
+/** Close read end @ COOKIE. */
+static ssize_t bhop_fread(void *cookie, char *buf, size_t size);
+static int bhop_fclosew(void *cookie);
+static int bhop_fcloser(void *cookie);
+
+/** Initialize bassoon state on the heap and get back that pointer. */
+static struct bassoon_state *use_state();
+static void free_state(struct bassoon_state *w_bassoon);
+
+FILE *bhop_readable(struct bassoon *init) {
+    cookie_io_functions_t io = {
+        .read  = bhop_fread,
+        .close = bhop_fcloser,
+        .write = NULL,
+        .seek  = NULL,
+    };
+
+    return fopencookie(init, "r", io);
 }
 
-void bassoon_push(struct bassoon *q, char *val) {
-    if (q->count == q->cap) {
-        size_t oldcap = q->cap;
-        size_t newcap = oldcap * 2;
-
-        char **newbuf = calloc(newcap, sizeof(char *));
-        if (!newbuf) return;
-
-        // copy linearized existing content into new buffer
-        // in order (head ... oldcap-1, 0 ... head-1)
-        for (size_t i = 0; i < q->count; i++) {
-            size_t idx = (q->hd + i) % oldcap;
-            newbuf[i] = q->buffer[idx];
-        }
-
-        free(q->buffer);
-        q->buffer = newbuf;
-
-        q->hd = 0;
-        q->tl = q->count;
-        q->cap  = newcap;
+FILE *bhop_writable(struct bassoon *init) {
+    struct bassoon_state *w_bassoon = use_state();
+    if (!w_bassoon) {
+        perror("use_state");
+        return NULL;
+    }
+    w_bassoon->queue = init;
+    w_bassoon->parser = yajl_alloc(&callbacks, NULL, (void *) w_bassoon);
+    if (!w_bassoon->parser) {
+        perror("yajl_alloc");
+        free(w_bassoon);
+        return NULL;
     }
 
-    q->buffer[q->tl] = val;
-    q->tl = (q->tl + 1) % q->cap;
-    q->count++;
+    cookie_io_functions_t io = {
+        .write = bhop_fwrite,
+        .close = bhop_fclosew,
+        .read  = NULL,
+        .seek  = NULL,
+    };
+
+    return fopencookie(w_bassoon, "w", io);
+}
+
+/* BEGIN STATIC */
+static ssize_t bhop_fwrite(void *cookie, const char *buf, size_t size) {
+    struct bassoon_state *c = cookie;
+    yajl_parse(c->parser, (const unsigned char *)buf, size);
+    return size;
+}
+
+static int bhop_fclosew(void *cookie) {
+    struct bassoon_state *cc = (void *) cookie;
+    if (!cc) {
+        return 1;
+    }
+
+    if (cc->parser) {
+        yajl_free(cc->parser);
+    }
+    if (cc->keys) {
+        free(cc->keys);
+    }
+    free(cc);
+
+    return 0;
+}
+
+static ssize_t bhop_fread(void *cookie, char *buf, size_t size) {
+    struct bassoon *c = cookie;
+    char *json = bassoon_pop(c);
+    if (!json)
+        return 0;
+
+    size_t json_len = strlen(json);
+    size_t out_len;
+
+    /* We want to include '\n' if possible */
+    if (json_len + 1 <= size) {
+        /* Full JSON plus newline fits */
+        memcpy(buf, json, json_len);
+        buf[json_len] = '\n';
+        out_len = json_len + 1;
+    } else {
+        /* Otherwise, we just emit truncated JSON only */
+        memcpy(buf, json, size);
+        out_len = size;
+    }
+
+    free(json);
+    return out_len;
+}
+
+static int bhop_fcloser(void *cookie) {
+    struct bassoon *queue = (void *) cookie;
+    if (!queue) { return 1; }
+    bassoon_free(queue);
+    return 0;
 }
 
 static int handle_null(void *ctx) {
@@ -237,8 +308,9 @@ static int handle_end_map(void *ctx) {
         }
         cur->keys_size = 0;
 
+        char *json = yyjson_write(final, cur->pp_flags, NULL);
         // we push to queue
-        bassoon_push(cur->queue, yyjson_write(final, cur->pp_flags, NULL));
+        bassoon_push(cur->queue, json);
 
         // free(cur->queue.handle);
         yyjson_doc_free(final);
@@ -273,151 +345,33 @@ static yajl_callbacks callbacks = {
     .yajl_end_array   = handle_end_array
 };
 
-static ssize_t bhopcookie_read(void *cookie, char *buf, size_t size) {
-    struct bassoon *c = cookie;
+static struct bassoon_state *use_state(void) {
+    struct bassoon_state *st = calloc(1, sizeof(struct bassoon_state));
+    if (!st) return null(ENOMEM);
 
-    char *json = bassoon_pop(c);
-    if (!json)
-        return 0;
-
-    size_t json_len = strlen(json);
-    size_t out_len;
-
-    /* We want to include '\n' if possible */
-    if (json_len + 1 <= size) {
-        /* Full JSON plus newline fits */
-        memcpy(buf, json, json_len);
-        buf[json_len] = '\n';
-        out_len = json_len + 1;
-    } else {
-        /* Otherwise, we just emit truncated JSON only */
-        memcpy(buf, json, size);
-        out_len = size;
+    st->keys_cap = 1 << 8;     // 256
+    st->keys = calloc(st->keys_cap, sizeof(char *));
+    if (!st->keys) {
+        free(st);
+        return null(ENOMEM);
     }
 
-    free(json);
-    return out_len;
+    // IMPORTANT: do NOT allocate st->queue here.
+    // It must be set by bhop_writable() to point to caller's queue.
+    st->queue = NULL;
+
+    return st;
 }
 
-static ssize_t bhop_fwrite(void *cookie, const char *buf, size_t size) {
-    struct bassoon_state *c = cookie;
-    yajl_parse(c->parser, (const unsigned char *)buf, size);
-    return size;
-}
+static void free_state(struct bassoon_state *st) {
+    if (!st) return;
 
-/** Close write end @ COOKIE. */
-static int bhop_fclosew(void *cookie) {
-    struct bassoon_state *cc = (void *) cookie;
-    if (!cc) {
-        return 1;
-    }
+    // Don't free st->queue here — it's not owned by the state!
 
-    if (cc->parser) {
-        yajl_free(cc->parser);
-    }
-    if (cc->keys) {
-        free(cc->keys);
-    }
-    free(cc);
+    if (st->keys)
+        free(st->keys);
 
-    return 0;
-}
-
-/** Close read end @ COOKIE. */
-static int bhop_fcloser(void *cookie) {
-    struct bassoon *queue = (void *) cookie;
-    if (!queue) { return 1; }
-    bassoon_free(queue);
-    return 0;
-}
-
-static FILE *bhop_fopenw(struct bassoon_state *init) {
-    yajl_handle parser = yajl_alloc(&callbacks, NULL, (void *) init);
-    if (!parser) {
-        bassoon_free(init->queue);
-        free(init->keys);
-        free(init);
-        return NULL;
-    }
-
-    init->parser = parser;
-
-    cookie_io_functions_t io = {
-        .write = bhop_fwrite,
-        .close = bhop_fclosew,
-        .read  = NULL,
-        .seek  = NULL,
-    };
-
-    return fopencookie(init, "w", io);
-}
-
-static FILE *bhop_fopenr(struct bassoon *init) {
-    cookie_io_functions_t io = {
-        .read  = bhopcookie_read,
-        .close = bhop_fcloser,
-        .write = NULL,
-        .seek  = NULL,
-    };
-
-    return fopencookie(init, "r", io);
-}
-
-void bassoon_free(struct bassoon *q) {
-    if (!q || !q->buffer) return;
-
-    for (size_t i = 0; i < q->count; i++) {
-        size_t idx = (q->hd + i) % q->cap;
-
-        if (q->buffer[idx])
-            free(q->buffer[idx]);
-    }
-
-    free(q->buffer);
-    free(q);
-}
-
-char *bassoon_pop(struct bassoon *q) {
-    if (q->count == 0)
-        return NULL;
-
-    char *val = q->buffer[q->hd];
-    q->buffer[q->hd] = 0;
-    q->hd = (q->hd + 1) % q->cap;
-    q->count--;
-
-    return val;
-}
-
-int bhop(FILE *files[2]) {
-    struct bassoon_state *init = calloc(1, sizeof(struct bassoon_state));
-    if (!init) return one(ENOMEM);
-    init->queue = calloc(1, sizeof(struct bassoon));
-    if (!init->queue) return one(ENOMEM);
-    bassoon_init(init->queue);
-    init->keys_cap = 1 << 8;
-    init->keys = calloc(1 << 8, sizeof(char *));
-    init->keys_size = 0;
-
-    FILE *writable = bhop_fopenw(init);
-    if (!writable) {
-        perror("open_writable");
-        bassoon_free(init->queue);
-        free(init->keys);
-        free(init);
-        return one(ENOMEM);
-    }
-    FILE *readable = bhop_fopenr(init->queue);
-    if (!readable) {
-        perror("open_readable");
-        bassoon_free(init->queue);
-        free(init->keys);
-        free(init);
-        return one(ENOMEM);
-    }
-    files[0] = writable;
-    files[1] = readable;
-    return 0;
+    free(st);
 }
 
 #undef push

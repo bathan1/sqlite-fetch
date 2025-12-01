@@ -1,7 +1,7 @@
 # ---- Config ----
 EXT     := yarts
 TARGET  := lib$(EXT).so
-SRC     := src/yarts.c src/fetch.c src/bassoon.c src/tls.c
+SRC     := src/yarts.c src/helpers.bassoon.c src/helpers.bhop.c src/helpers.fetch.c src/helpers.prefix.c src/helpers.tcp.c src/helpers.tls.c
 OBJ     := $(SRC:.c=.o)
 
 # Detect platform
@@ -69,4 +69,3 @@ clean:
 	rm -f $(OBJ) $(TARGET)
 
 .PHONY: all clean install uninstall
-

@@ -1,9 +1,9 @@
-/** 
- * @file bassoon.h
+/**
+ * @file helpers.bassoon.h
  * @brief A(nother) JSON object queue
  *
  * `bassoon.h` exports a pipe that connects a byte stream write end
- * with a self-framing queue (#bhop()) along with the internal queue functions 
+ * with a self-framing queue (#bhop()) along with the internal queue functions
  * associated with the actual #bassoon struct.
  *
  * You'll probably never need to use the bassoon functions yourself,
@@ -21,24 +21,10 @@
  */
 #pragma once
 
-#include <stdio.h>
-
-/**
- * @brief Initialize a write/read pipe over a #bassoon queue.
- *
- * Bassoon Handle Open Pipe, or #bhop(), opens a unidirectional
- * pipe where you write into `FILES[0]` and read from `FILES[1]`,
- * just like posix pipes.
- *
- * @retval  0  Success. `FILES[0]` and `FILES[1]` are fully initialized.
- * @retval -1  Error. `FILES` is left unchanged and errno is set.
- */
-int bhop(FILE *files[2]);
-
 /**
  * @brief A double ended queue for JSON values.
  *
- * A JSON object queue with a writable file descriptor. You can write 
+ * A JSON object queue with a writable file descriptor. You can write
  * whatever bytes you want to it, like the bytes from a TCP stream.
  *
  * Reads are constant-time from both its head and its tail, so it's technically a "deque".
@@ -60,18 +46,18 @@ struct bassoon {
     unsigned long count;
 };
 
-/** 
+/**
  * @brief Initializes the queue at BASS.
  *
- * Allocates the #bassoon::buffer at BASS on the heap, along 
+ * Allocates the #bassoon::buffer at BASS on the heap, along
  * with setting the initial fields.
  */
 void bassoon_init(struct bassoon *bass);
 
-/** 
+/**
  * @brief Push object buffer at VAL into BASS.
  *
- * VAL is expected to be a well-formed JSON object because the 
+ * VAL is expected to be a well-formed JSON object because the
  * partial byte handling is left to a parent of BASS to handle.
  */
 void bassoon_push(struct bassoon *bass, char *val);
@@ -84,7 +70,7 @@ void bassoon_push(struct bassoon *bass, char *val);
  */
 void bassoon_free(struct bassoon *bass);
 
-/** 
+/**
  * @brief Pop an object from the queue in BASS.
  *
  * #bassoon::count is decremented accordingly assuming
@@ -94,4 +80,3 @@ void bassoon_free(struct bassoon *bass);
  * @retval ~0 Success (anything but 0 / NULL).
  */
 char *bassoon_pop(struct bassoon *bass);
-

@@ -1,9 +1,9 @@
-#include "tls.h"
+#include "helpers.tls.h"
 #include <openssl/err.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-int connect_ssl(SSL **ssl, int sockfd,
+int tls_connect(SSL **ssl, int sockfd,
                 SSL_CTX **ctx, const char *hostname)
 {
     SSL_load_error_strings();
@@ -40,7 +40,7 @@ int connect_ssl(SSL **ssl, int sockfd,
     return 0;
 }
 
-void cleanup_ssl(SSL *ssl, SSL_CTX *ctx) {
+void tls_free(SSL *ssl, SSL_CTX *ctx) {
     if (ssl) {
         SSL_shutdown(ssl);
         SSL_free(ssl);
@@ -79,4 +79,3 @@ ssize_t recv_maybe_tls(SSL *ssl, int sockfd,
         return recv(sockfd, buf, len, 0);
     }
 }
-

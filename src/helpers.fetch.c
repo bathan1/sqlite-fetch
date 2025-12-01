@@ -1,12 +1,15 @@
 #define _GNU_SOURCE
-#include "common.h"
-#include "bassoon.h"
-#include "fetch.h"
-#include "tls.h"
+
+#include <asm-generic/errno.h>
+#include <netdb.h>
+#include <openssl/types.h>
+#include "helpers.errors.h"
+#include "helpers.tcp.h"
+#include "helpers.tls.h"
+#include "helpers.fetch.h"
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <pthread.h>
-#include <netdb.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -15,84 +18,151 @@
 #include <curl/curl.h>
 #include <sys/epoll.h>
 
-struct fetch_state {
-    /* FDs */
-    int netfd;        // TCP socket (nonblocking)
-    int outfd;        // socketpair writer FD (nonblocking)
-    int ep;           // epoll instance FD
-    
-    char *hostname;
-    SSL_CTX *ssl_ctx;
-    SSL     *ssl; 
+void url_free(struct url *url) {
+    if (!url) {
+        return;
+    }
 
-    /* --- HTTP HEADER PARSING --- */
-    bool headers_done;
-    char header_buf[8192];  // store header bytes
-    size_t header_len;
-
-    bool chunked_mode;
-    size_t content_length;
-
-    /* --- CHUNKED DECODING STATE --- */
-    bool reading_chunk_size;    // true = reading hex size line
-    char chunk_line[128];       // buffer for chunk-size line
-    size_t chunk_line_len;      // how many chars collected
-    size_t current_chunk_size;  // remaining bytes in current chunk
-    int expecting_crlf;         // 2 -> expecting "\r\n"
-
-    FILE *bass[2];
-
-    /* --- NONBLOCKING SEND STATE FOR outfd --- */
-    char *pending_buf;         // partial write buffer (JSON object)
-    size_t pending_len;         // bytes left to send
-    size_t pending_off;         // current offset in pending_send
-
-    /* --- TERMINATION STATE --- */
-    bool http_done;             // reached end of chunked stream or TCP closed
-    bool closed_outfd;          // have we closed outfd yet?
-};
-
-/**
- * Taken from Web API URL, word 4 word, bar 4 bar.
- */
-struct url {
-    /**
-     * A string containing the domain of the URL.
-     *
-     * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL}
-     */
-    str *hostname;
-
-    /**
-     * A string containing an initial '/' followed by the path of the URL, 
-     * not including the query string or fragment.
-     *
-     * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/pathname}
-     */
-    str *pathname;
-
-    /**
-     * A string containing the port number of the URL.
-     *
-     * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/port}
-     */
-    str *port;
-};
-
-static char *host(struct url *url);
-
-static int url_free(struct url *url);
-static int tcp_getaddrinfo(struct url *url, struct addrinfo **wout);
-static int try_socket(struct addrinfo *addrinfo);
-static int try_connect(int sockfd, struct addrinfo *addrinfo);
-
-static struct url *parse_url(const char *url);
-
-// fcntl flat setting boilerplate
-static void set_nonblocking(int fd) {
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    if (url->host) free(url->host);
+    if (url->protocol) free(url->protocol);
+    if (url->hostname) free(url->hostname);
+    if (url->pathname) free(url->pathname);
+    if (url->port) free(url->port);
 }
+
+void dispatch_free(struct dispatch *dispatch) {
+    // CALLER frees sockfd
+    if (!dispatch) return;
+    url_free(&dispatch->url);
+
+    if (dispatch->addrinfo) {
+        freeaddrinfo(dispatch->addrinfo);
+        dispatch->addrinfo = NULL;
+    }
+    // if (dispatch->ssl || dispatch->ctx) {
+    //     tls_free(dispatch->ssl, dispatch->ctx);
+    // }
+}
+
+static struct url *url_of_string(const char *url);
+struct dispatch *fetch_socket(const char *url, const char *init[4]) {
+    struct dispatch *disp = calloc(1, sizeof(struct dispatch));
+    if (!disp) {
+        return null(ENOMEM);
+    }
+
+    struct url *URL = url_of_string(url);
+    if (!URL) {
+        free(disp);
+        return null(ENOMEM);
+    }
+    disp->url = *URL;
+    if (tcp_getaddrinfo(str(disp->url.hostname), str(disp->url.port), &disp->addrinfo)) {
+        dispatch_free(disp);
+        return null(EINVAL);
+    }
+
+    disp->sockfd = tcp_socket(disp->addrinfo);
+    if (disp->sockfd < 0) {
+        dispatch_free(disp);
+        return null(EINVAL);
+    }
+    return disp;
+}
+
+static int set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0;
+}
+int use_fetch(int fds[4], struct dispatch *dispatch) {
+    if (connect(dispatch->sockfd, dispatch->addrinfo->ai_addr, dispatch->addrinfo->ai_addrlen) < 0) {
+        close(dispatch->sockfd);
+        dispatch_free(dispatch);
+        return one(ECONNREFUSED);
+    }
+    bool is_tls = strncmp(str(dispatch->url.protocol), "https:", 6) == 0;
+    if (is_tls) {
+        if (tls_connect(&dispatch->ssl, dispatch->sockfd, &dispatch->ctx, str(dispatch->url.hostname))) {
+            close(dispatch->sockfd);
+            dispatch_free(dispatch);
+            return one(ECONNABORTED);
+        } // else { ok! }
+    }
+
+    // make recv() nonblocking
+    if (set_nonblocking(dispatch->sockfd) < 0) {
+        close(dispatch->sockfd);
+        dispatch_free(dispatch);
+        return one(EIO);
+    }
+    prefixed *GET = prefix(
+        "GET %s HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "User-Agent: yarts/1.0\r\n"
+        "Accept: */*\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        str(dispatch->url.pathname),
+        str(dispatch->url.host)
+    );
+    if (!GET) {
+        close(dispatch->sockfd);
+        dispatch_free(dispatch);
+        return one(ENOMEM);
+    }
+
+    if (send_maybe_tls(dispatch->ssl, dispatch->sockfd, str(GET), len(GET)) < 0) {
+        if (errno != EAGAIN) {
+            free(GET);
+            close(dispatch->sockfd);
+            dispatch_free(dispatch);
+            return one(EIO);
+        }
+        // TODO?
+    }
+    free(GET);
+
+    int sv[2] = {0};
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
+        close(dispatch->sockfd);
+        dispatch_free(dispatch);
+        return one(ENOMEM);
+    }
+    int appfd = sv[0];
+    int fetchfd = sv[1];
+    if (set_nonblocking(fetchfd)) {
+        close(appfd);
+        close(fetchfd);
+        close(dispatch->sockfd);
+        dispatch_free(dispatch);
+        return one(EIO);
+    }
+
+    int pollfd = epoll_create1(0);
+    if (pollfd < 0) {
+        close(appfd);
+        close(fetchfd);
+        close(dispatch->sockfd);
+        dispatch_free(dispatch);
+        return one(ENOMEM);
+    }
+    struct epoll_event ev = { .events=EPOLLIN, .data.fd=dispatch->sockfd };
+    if (epoll_ctl(pollfd, EPOLL_CTL_ADD, dispatch->sockfd, &ev)) {
+        close(pollfd);
+        close(appfd);
+        close(fetchfd);
+        close(dispatch->sockfd);
+        dispatch_free(dispatch);
+        return one(EIO);
+    }
+
+    fds[0] = dispatch->sockfd;
+    fds[1] = appfd;
+    fds[2] = fetchfd;
+    fds[3] = pollfd;
+    return 0;
+}
+
 
 static bool handle_http_headers(struct fetch_state *st);
 static void handle_http_body_bytes(struct fetch_state *st,
@@ -103,129 +173,57 @@ static void handle_http_body(struct fetch_state *st);
 static bool flush_pending(struct fetch_state *st);
 static void flush_bassoon(struct fetch_state *st);
 
-static void *fetcher(void *arg); 
+void *fetcher(void *arg) {
+    struct fetch_state *fs = arg;
+    struct epoll_event events[4];
 
-FILE *fetch(const char *url, const char *init[4]) {
-    struct fetch_state *fs = calloc(1, sizeof(struct fetch_state));
-    if (!fs) {
-        return null(ENOMEM);
-    }
-    bool is_tls = strncmp(url, "https://", 8) == 0;
-    struct url *URL = parse_url(url);
-    if (!URL) {
-        return null(errno);
-    }
-    fs->hostname = strdup(stroff(URL->hostname));
+    /* ---------------------------
+       1. MAIN: Read HTTP response
+       --------------------------- */
+    while (!fs->http_done) {
+        int n = epoll_wait(fs->ep, events, 4, -1);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
 
-    int sv[2] = {0};
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
-        url_free(URL);
-        free(fs);
-        return null(errno);
-    }
-    int app_fd = sv[0];
-    int fetch_fd = sv[1];
-    set_nonblocking(fetch_fd);
+        for (int i = 0; i < n; i++) {
+            int fd = events[i].data.fd;
+            uint32_t ev = events[i].events;
 
-    struct addrinfo *res = 0;
-    int rc = tcp_getaddrinfo(URL, &res);
-    if (rc != 0) { 
-        url_free(URL);
-        free(fs);
-        return null(errno);
+            /* New data from the network */
+            if (fd == fs->netfd && (ev & EPOLLIN)) {
+                if (!fs->headers_done)
+                    handle_http_headers(fs);
+                else
+                    handle_http_body(fs);
+            }
+        }
     }
 
-    int sockfd = try_socket(res);
-    if (sockfd < 0) { url_free(URL); free(fs); return null(ENOMEM); }
-    if (try_connect(sockfd, res) != 0) { url_free(URL); free(fs); return null(ECONNREFUSED); }
-    if (is_tls) {
-        // Try tls and abort early
-        if (connect_ssl(&fs->ssl, sockfd, &fs->ssl_ctx, fs->hostname)) {
-            close(sockfd);
-            close(fetch_fd);
-            free(fs->hostname);
-            free(fs);
-            return null(ECONNABORTED);
-        } // else { ok! }
+    fclose(fs->bass[0]);
+    fs->bass[0] = NULL;
+
+    /* There may still be unflushed parsed objects */
+    flush_bassoon(fs);
+
+    fclose(fs->bass[1]);
+    fs->bass[1] = NULL;
+
+    tls_free(fs->ssl, fs->ssl_ctx);
+
+    if (!fs->closed_outfd) {
+        close(fs->outfd);
+        fs->closed_outfd = true;
     }
 
-    set_nonblocking(sockfd);
+    close(fs->netfd);
+    close(fs->ep);
 
-    freeaddrinfo(res);
-    str *GET = string(
-        "GET %s HTTP/1.1\r\n"
-        "Host: %s\r\n"
-        "User-Agent: yarts/1.0\r\n"
-        "Accept: */*\r\n"
-        "Connection: close\r\n"
-        "\r\n",
-        stroff(URL->pathname),
-        fs->hostname
-    );
-    url_free(URL);
+    free(fs->hostname);
+    free(fs);
 
-    if (!GET) {
-        close(sockfd);
-        return null(errno);
-    }
-
-    ssize_t sent = send_maybe_tls(fs->ssl, sockfd, stroff(GET), len(GET));
-    free(GET);
-    if (sent < 0 && errno != EAGAIN) {
-        return null(errno);
-    }
-
-    if (!fs) {
-        close(sockfd);
-        close(fetch_fd);
-        return null(ENOMEM);
-    }
-    fs->netfd = sockfd;
-    fs->outfd = fetch_fd;
-    fs->ep = epoll_create1(0);
-    if (fs->ep < 0) {
-        free(fs);
-        close(sockfd);
-        close(fetch_fd);
-        return null(errno);
-    }
-    struct epoll_event ev = {
-        .events = EPOLLIN,
-        .data.fd = sockfd
-    };
-    epoll_ctl(fs->ep, EPOLL_CTL_ADD, sockfd, &ev);
-
-    fs->headers_done = false;
-    fs->header_len = 0;
-
-    // Initialize body parsing state
-    fs->chunked_mode = false;
-    fs->current_chunk_size = 0;
-    fs->reading_chunk_size = true;
-    fs->chunk_line_len = 0;
-
-    if (bhop(fs->bass)) {
-        perror("bhop()");
-        close(app_fd);
-        return NULL;
-    }
-
-    fs->http_done = false;
-
-    // spawn background worker thread
-    pthread_t tid;
-    pthread_create(&tid, NULL, fetcher, fs);
-
-    // detach so it cleans up after finishing
-    pthread_detach(tid);
-
-    FILE *fetchfile = fdopen(app_fd, "r");
-    if (!fetchfile) {
-        perror("fdopen()");
-        close(app_fd);
-        return NULL;
-    }
-    return fetchfile;
+    return NULL;
 }
 
 static ssize_t read_full(int fd, void *buf, size_t len) {
@@ -246,79 +244,7 @@ static ssize_t read_full(int fd, void *buf, size_t len) {
     return off;
 }
 
-static char *host(struct url *url) {
-    if (!url || !url->hostname) { return null(EINVAL); }
-
-    if (url->port) {
-        if (len(url->hostname) > 0 && len(url->port) > 0)
-            return string("%s:%s", stroff(url->hostname), stroff(url->port));
-    }
-    return strdup(stroff(url->hostname));
-}
-
-static int url_free(struct url *url) {
-    int count = 0;
-    if (!url) {
-        return count;
-    }
-    count++;
-
-    if (url->hostname) {
-        count += (free(url->hostname), 1);
-    }
-    if (url->pathname) {
-        count += (free(url->pathname), 1);
-    }
-    if (url->port) {
-        count += (free(url->port), 1);
-    }
-    count += (free(url), 1);
-    return count;
-}
-
-static int tcp_getaddrinfo(
-    struct url *url,
-    struct addrinfo **wout
-) {
-    if (!url || !wout) {
-        return EINVAL;
-    }
-    struct addrinfo hints = {
-        .ai_family=AF_INET,
-        .ai_socktype=SOCK_STREAM
-    };
-    int rc = getaddrinfo(stroff(url->hostname), stroff(url->port), &hints, wout);
-    if (rc != 0) {
-        perror("getaddrinfo");
-        url_free(url);
-        return rc;
-    }
-    return 0;
-}
-
-static int try_socket(struct addrinfo *addrinfo) {
-    // our own definition
-    int _ENOMEM_ = -1;
-    int sockfd = socket(addrinfo->ai_family, addrinfo->ai_socktype, addrinfo->ai_protocol);
-    if (sockfd < 0) {
-        perror("socket");
-        freeaddrinfo(addrinfo);
-        return _ENOMEM_;
-    }
-    return sockfd;
-}
-
-static int try_connect(int sockfd, struct addrinfo *addrinfo) {
-    if (connect(sockfd, addrinfo->ai_addr, addrinfo->ai_addrlen) < 0) {
-        perror("connect");
-        freeaddrinfo(addrinfo);
-        close(sockfd);
-        return ECONNREFUSED;
-    }
-    return 0;
-}
-
-static struct url *parse_url(const char *url) {
+static struct url *url_of_string(const char *url) {
     CURLU *u = curl_url();
     if (!u) {
         errno = ENOMEM;
@@ -333,6 +259,7 @@ static struct url *parse_url(const char *url) {
         return NULL;
     }
 
+    bool is_tls = strncmp(url, "https://", 8) == 0;
     char *host_c = NULL;
     char *path_c = NULL;
     char *port_c = NULL;
@@ -341,9 +268,12 @@ static struct url *parse_url(const char *url) {
     curl_url_get(u, CURLUPART_PATH, &path_c, 0);
     curl_url_get(u, CURLUPART_PORT, &port_c, CURLU_DEFAULT_PORT);
 
-    URL->hostname = string("%s", host_c);
-    URL->pathname = string("%s", path_c);
-    URL->port = string("%s", port_c);
+    URL->host = prefix("%s:%s", host_c, port_c);
+    URL->hostname = prefix("%s", host_c);
+    URL->pathname = prefix("%s", path_c);
+    URL->port = prefix("%s", port_c);
+    URL->protocol = prefix("%s", is_tls ? "https:" : "http:");
+
 
     curl_free(host_c);
     curl_free(path_c);
@@ -393,6 +323,7 @@ static void handle_http_body_bytes(struct fetch_state *st,
         /* 1. READ THE CHUNK-SIZE LINE */
         if (st->reading_chunk_size) {
             char c = data[i++];
+            printf("[chunk-size accumulating] got byte '%c' (0x%02x)\n", c, c);
 
             // Accumulate until CRLF
             if (c == '\r') {
@@ -541,7 +472,6 @@ static void handle_http_body(struct fetch_state *st) {
     char buf[4096];
 
     ssize_t n = recv_maybe_tls(st->ssl, st->netfd, buf, sizeof(buf));
-
     if (n > 0) {
         // feed raw bytes to chunk/body parser
         handle_http_body_bytes(st, buf, (size_t)n);
@@ -667,58 +597,4 @@ static void flush_bassoon(struct fetch_state *st) {
         close(out);
         st->closed_outfd = true;
     }
-}
-
-static void *fetcher(void *arg) {
-    struct fetch_state *fs = arg;
-    struct epoll_event events[4];
-
-    /* ---------------------------
-       1. MAIN: Read HTTP response
-       --------------------------- */
-    while (!fs->http_done) {
-
-        int n = epoll_wait(fs->ep, events, 4, -1);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            break;
-        }
-
-        for (int i = 0; i < n; i++) {
-            int fd = events[i].data.fd;
-            uint32_t ev = events[i].events;
-
-            /* New data from the network */
-            if (fd == fs->netfd && (ev & EPOLLIN)) {
-                if (!fs->headers_done)
-                    handle_http_headers(fs);
-                else
-                    handle_http_body(fs);
-            }
-        }
-    }
-
-    fclose(fs->bass[0]);
-    fs->bass[0] = NULL;
-
-    /* There may still be unflushed parsed objects */
-    flush_bassoon(fs);
-
-    fclose(fs->bass[1]);
-    fs->bass[1] = NULL;
-
-    cleanup_ssl(fs->ssl, fs->ssl_ctx);
-
-    if (!fs->closed_outfd) {
-        close(fs->outfd);
-        fs->closed_outfd = true;
-    }
-
-    close(fs->netfd);
-    close(fs->ep);
-
-    free(fs->hostname);
-    free(fs);
-
-    return NULL;
 }
