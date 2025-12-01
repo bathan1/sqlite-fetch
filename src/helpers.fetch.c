@@ -323,7 +323,6 @@ static void handle_http_body_bytes(struct fetch_state *st,
         /* 1. READ THE CHUNK-SIZE LINE */
         if (st->reading_chunk_size) {
             char c = data[i++];
-            printf("[chunk-size accumulating] got byte '%c' (0x%02x)\n", c, c);
 
             // Accumulate until CRLF
             if (c == '\r') {

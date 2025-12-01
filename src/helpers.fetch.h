@@ -120,31 +120,3 @@ struct fetch_state {
 };
 
 void *fetcher(void *arg);
-
-static char *append(char **bufptr, size_t len) {
-    char *buf = *bufptr;
-
-    char *p = (char *) realloc(buf, len + 1 + sizeof(size_t));
-    if (!p) return NULL;
-
-    size_t *meta = (size_t *)(p + len + 1);
-    *meta = len;
-
-    *bufptr = p;
-    return p;
-}
-
-static void trim_slice(const char **begin, const char **end) {
-    // *begin .. *end is half-open, end points one past last char
-    while (*begin < *end && isspace((unsigned char)**begin)) (*begin)++;
-    while (*end > *begin && isspace((unsigned char)*((*end) - 1))) (*end)--;
-}
-
-static char *trim(const char *b, const char *e) {
-    const ptrdiff_t len = e - b;
-    char *out = (char *) malloc((int)len + 1);
-    if (!out) return NULL;
-    memcpy(out, b, (size_t)len);
-    out[len] = '\0';
-    return out;
-}

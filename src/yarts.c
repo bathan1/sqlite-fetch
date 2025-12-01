@@ -481,7 +481,6 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
         column_def *def = vtab->columns[i];
         char *name = str(def->name);
         char *typename = str(def->typename);
-        printf("name=%s, typename=%s\n", name, typename);
         sqlite3_str_appendf(s, "%s %s", str(def->name), str(def->typename));
 
         if (i + 1 < vtab->columns_len)
@@ -693,7 +692,7 @@ static void json_bool_result(
     column_def *def,
     yyjson_val *column_val
 ) {
-    if (strncmp(def->typename, "int", 3) == 0 || strncmp(def->typename, "float", 5) == 0) {
+    if (strncmp(str(def->typename), "int", 3) == 0 || strncmp(str(def->typename), "float", 5) == 0) {
         sqlite3_result_int(pctx, yyjson_get_bool(column_val));
     } else {
         sqlite3_result_text(pctx, yyjson_get_bool(column_val) ? "true" : "false", -1, SQLITE_TRANSIENT);
