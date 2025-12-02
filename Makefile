@@ -1,69 +1,82 @@
-# ---- Config ----
-EXT     := yarts
-TARGET  := lib$(EXT).so
-SRC     := src/yarts.c src/api.c src/lib/bassoon.c src/lib/bhop.c src/lib/fetch.c src/lib/prefix.c src/lib/tcp.c src/lib/tls.c
-OBJ     := $(SRC:.c=.o)
+# Disable *all* implicit rules and implicit variables
+MAKEFLAGS += -rR
+.SUFFIXES:
 
-# Detect platform
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Darwin)
-    TARGET := lib$(EXT).dylib
-endif
+# ---- Names ----
+API_EXT     := yarts
+SQLITE_EXT  := yartssql
 
-# Compiler + flags
+API_TARGET     := lib$(API_EXT).so
+SQLITE_TARGET  := lib$(SQLITE_EXT).so
+
+# ---- Source Files ----
+SRC_COMMON := \
+    src/yarts.c \
+    src/lib/bassoon.c src/lib/bhop.c src/lib/fetch.c \
+    src/lib/prefix.c src/lib/tcp.c src/lib/tls.c
+
+SRC_SQLITE := \
+    src/yartssql.c
+
+OBJ_COMMON  := $(SRC_COMMON:.c=.o)
+OBJ_SQLITE  := $(SRC_SQLITE:.c=.o)
+
+# ---- Tools ----
 CC      := gcc
 CFLAGS  := -O2 -fPIC -Wall -Wextra -g
 LDFLAGS := -shared
+LIBS    := -lcurl -lyajl -lyyjson -lsqlite3
 
-# System libraries
-LIBS := -lcurl -lyajl -lyyjson -lsqlite3
+# ---- Install Locations ----
+PREFIX     := /usr/local
+LIBDIR     := $(PREFIX)/lib
+INCLUDEDIR := $(PREFIX)/include
 
-# Install locations
-PREFIX       := /usr/local
-LIBDIR       := $(PREFIX)/lib
-INCLUDEDIR   := $(PREFIX)/include/$(EXT)
+# ---- Default: Only build SQLite extension ----
+default: $(SQLITE_TARGET)
+
+# ---- Build both ----
+all: $(API_TARGET) $(SQLITE_TARGET)
 
 # ---- Build Rules ----
+$(API_TARGET): $(OBJ_COMMON)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
-all: $(TARGET)
-
-$(TARGET): $(OBJ)
+$(SQLITE_TARGET): $(OBJ_SQLITE) $(OBJ_COMMON)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# ---- Install / Uninstall ----
-install: $(TARGET)
-	@echo "Installing $(TARGET) to $(LIBDIR)"
+# ---- Install Public API (NOT the SQLite extension) ----
+install: $(API_TARGET)
+	@echo "Installing $(API_TARGET) to $(LIBDIR)"
 	mkdir -p $(LIBDIR)
-	install -m 755 $(TARGET) $(LIBDIR)
+	install -m 755 $(API_TARGET) $(LIBDIR)
 
-	@echo "Installing public header yarts.h to $(PREFIX)/include"
-	install -m 644 src/yarts.h $(PREFIX)/include/yarts.h
+	@echo "Installing public header yarts.h to $(INCLUDEDIR)"
+	install -m 644 src/yarts.h $(INCLUDEDIR)/yarts.h
 
-ifeq ($(UNAME_S),Linux)
-	@echo "Updating ldconfig cache"
-	ldconfig
-endif
+	@echo "Updating ldconfig cache (Linux only)"
+	@if [ "$(shell uname -s)" = "Linux" ]; then ldconfig; fi
 
 	@echo "Install complete."
 
+# ---- Uninstall ----
 uninstall:
-	@echo "Removing library from $(LIBDIR)"
-	rm -f $(LIBDIR)/$(TARGET)
+	@echo "Removing $(API_TARGET) from $(LIBDIR)"
+	rm -f $(LIBDIR)/$(API_TARGET)
 
-	@echo "Removing header from $(PREFIX)/include"
-	rm -f $(PREFIX)/include/yarts.h
+	@echo "Removing yarts.h from $(INCLUDEDIR)"
+	rm -f $(INCLUDEDIR)/yarts.h
 
-ifeq ($(UNAME_S),Linux)
-	@echo "Updating ldconfig cache"
-	ldconfig
-endif
+	@echo "Updating ldconfig cache (Linux only)"
+	@if [ "$(shell uname -s)" = "Linux" ]; then ldconfig; fi
 
 	@echo "Uninstall complete."
 
+# ---- Clean ----
 clean:
-	rm -f $(OBJ) $(TARGET)
+	rm -f $(OBJ_COMMON) $(OBJ_SQLITE) $(API_TARGET) $(SQLITE_TARGET)
 
-.PHONY: all clean install uninstall
+.PHONY: default all install uninstall clean

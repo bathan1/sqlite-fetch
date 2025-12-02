@@ -1,9 +1,10 @@
 /**
- * @file helpers.prefix.h
+ * @file prefix.h
  * @brief Hack string in C
  *
  * Primary motivation behind this is to be able to lookup length
- * in constant time after computing \c strlen() on it once.
+ * in constant time after computing \c strlen() on it once **without**
+ * having to define a new struct ourselves.
  */
 #include <stddef.h>
 

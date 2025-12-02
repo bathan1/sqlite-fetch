@@ -1,5 +1,5 @@
 /**
- * @file api.h
+ * @file yarts.h
  * @brief Yet Another Runtime TCP Stream
  *
  * Helper functions #yarts.c has available.
@@ -11,7 +11,6 @@
  * `gcc fetch_print.c -lyarts -o fetch_print`
  */
 
- #include "lib/prefix.h"
  #include <stdio.h>
 
  /* FETCH FRAME OPTIONS. These are just plain integers

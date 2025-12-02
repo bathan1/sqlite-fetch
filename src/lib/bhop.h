@@ -1,5 +1,5 @@
 /**
- * @file helpers.bhop.h
+ * @file bhop.h
  * @brief Buffer Handle Open Pipe
  *
  * This is our custom in memory buffer stream over a #bassoon queue.

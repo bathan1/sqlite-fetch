@@ -33,7 +33,7 @@ mkdir build && cd build && cmake ..
 sudo make install
 ```
 
-Then `cd` back into the root and run:
+Then `cd` back into the root and run to build the extension file `libyartssql.so`:
 
 ```bash
 make
@@ -57,13 +57,15 @@ pnpm run test
 ```
 
 ## Library
-The primary file is [yarts.h](./src/yarts.h), which defines the
-SQLite loader function `sqlite3_yarts_init` **and** the networking
-functions the extension uses itself.
+The majority of the code is under [`lib`](./src/lib), where a select number of functions
+are exposed to the extension [yartssql.c](./src/yartssql.c) file via the [`yarts.h`](./src/yarts.h) header.
 
-The majority of the code is under the `helper.*.c` files, which is only
-exposed to the [yarts.c](./src/yarts.c) file so that it doesn't pollute
-the yarts "public" API.
+If you've installed the API via the `make install` command, you can use the helper functions
+in standalone code by compiling with the `-lyarts` flag. To compile the queue printer example script:
+
+```
+gcc bassoon_print.c -lyarts
+```
 
 ## Documentation
 This project uses [Doxygen](https://www.doxygen.nl/) for code documentation

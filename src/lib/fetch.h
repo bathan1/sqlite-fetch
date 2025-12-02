@@ -1,5 +1,5 @@
 /**
- * @file helpers.fetch.h
+ * @file fetch.h
  * @brief Simplified [Web Fetch](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API) implementation for C.
  */
 

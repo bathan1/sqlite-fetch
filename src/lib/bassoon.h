@@ -1,5 +1,5 @@
 /**
- * @file helpers.bassoon.h
+ * @file bassoon.h
  * @brief A(nother) JSON object queue
  *
  * `bassoon.h` exports a pipe that connects a byte stream write end

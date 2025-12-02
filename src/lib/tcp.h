@@ -1,5 +1,5 @@
 /**
- * @file helpers.tcp.h
+ * @file tcp.h
  * @brief Socket management
  */
 #include <netdb.h>
