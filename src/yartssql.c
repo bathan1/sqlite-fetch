@@ -362,7 +362,9 @@ column_def **init_columns(int argc, const char *const *argv, size_t *num_columns
         // id int default   0
         // id int generated always as ()
         for (int i = 1; i < MIN(5, tokens_size); i++) {
-            tokens[i] = lowercase_own(tokens[i]);
+            if (str(tokens[i])[0] != '\'') {
+                tokens[i] = lowercase_own(tokens[i]);
+            }
         }
 
         const char *column_name = str(tokens[COL_NAME]);
