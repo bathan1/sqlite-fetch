@@ -47,8 +47,8 @@ Create a Virtual Table by declaring your expected payload shape with the `fetch`
 
 ```sql
 CREATE VIRTUAL TABLE todos USING fetch (
-    "userId" INT,
     id INT,
+    "userId" INT,
     title TEXT,
     completed TEXT
 );

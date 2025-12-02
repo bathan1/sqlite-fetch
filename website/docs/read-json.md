@@ -69,10 +69,11 @@ Yarts lets you map JSON booleans to `TEXT` or `INT`.
 If you choose to save `completed` columns as `TEXT`:
 
 ```sql title="todos_text.sql"
+DROP TABLE IF EXISTS todos;
 CREATE VIRTUAL TABLE todos USING fetch (
     url TEXT DEFAULT 'https://jsonplaceholder.typicode.com/todos',
-    "userId" INT,
     id INT,
+    "userId" INT,
     title TEXT,
     completed TEXT
 );
@@ -102,6 +103,7 @@ sqlite> SELECT * FROM todos LIMIT 5;
 Boolean maps to `INT`s follow the standard C style bools where...
 
 ```sql title="todos_int.sql"
+DROP TABLE IF EXISTS todos;
 CREATE VIRTUAL TABLE todos USING fetch (
     url TEXT DEFAULT 'https://jsonplaceholder.typicode.com/todos',
     "userId" INT,
@@ -109,6 +111,7 @@ CREATE VIRTUAL TABLE todos USING fetch (
     title TEXT,
     completed INT
 );
+SELECT * FROM todos LIMIT 5;
 ```
 
 ... `true` turns into `1` and `false` turns into `0`:
