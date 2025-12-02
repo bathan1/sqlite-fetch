@@ -4,7 +4,7 @@
 #include <yajl/yajl_parse.h>
 
 #include "bassoon.h"
-#include "error_handler.h"
+#include "cfns.h"
 
 #ifndef MAX
 #define MAX(a, b) (a > b ? a : b)

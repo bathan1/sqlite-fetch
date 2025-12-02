@@ -3,7 +3,7 @@
 #include "tcp.h"
 #include "tls.h"
 #include "fetch.h"
-#include "error_handler.h"
+#include "cfns.h"
 
 #include <netdb.h>
 #include <openssl/types.h>

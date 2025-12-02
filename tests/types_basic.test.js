@@ -22,10 +22,13 @@ describe("Usual queries", () => {
             .all();
         expect(todos.length).toBeGreaterThanOrEqual(1);
         todos.forEach((row) => {
-            expect("completed" in row).toBe(true);
-            if (row.completed === "true") {
-            } else if (row.completed === "false") {
-            } else {
+            expect(typeof row.id).toBe("number");
+            expect(typeof row.userId).toBe("number");
+            expect(typeof row.title).toBe("string");
+            expect(typeof row.completed).toBe("string");
+
+            if (row.completed === "true" || row.completed === "false") {}
+            else {
                 expect(
                     `Didn't expect that "completed" column: ${row.completed}`,
                 ).toEqual(0);
@@ -40,10 +43,12 @@ describe("Usual queries", () => {
             .all();
         expect(todos.length).toBeGreaterThanOrEqual(1);
         todos.forEach((row) => {
-            expect("completed" in row).toBe(true);
-            if (row.completed === 1) {
-            } else if (row.completed === 0) {
-            } else {
+            expect(typeof row.id).toBe("number");
+            expect(typeof row.userId).toBe("number");
+            expect(typeof row.title).toBe("string");
+            expect(typeof row.completed).toBe("number");
+            if (row.completed === 1 || row.completed === 0) {}
+            else {
                 expect(
                     `Didn't expect that "completed" column: ${row.completed}`,
                 ).toEqual(0);
