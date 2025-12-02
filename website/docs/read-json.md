@@ -84,20 +84,20 @@ Then yarts will map booleans to their text representation `true` and `false`:
 
 ```bash
 sqlite> SELECT * FROM todos LIMIT 5;
-┌────────┬────┬──────────────────────────────────────────────────────────────┬───────────┐
-│ userId │ id │                            title                             │ completed │
-├────────┼────┼──────────────────────────────────────────────────────────────┼───────────┤
-│ 1      │ 1  │ delectus aut autem                                           │ false     │
-├────────┼────┼──────────────────────────────────────────────────────────────┼───────────┤
-│ 1      │ 2  │ quis ut nam facilis et officia qui                           │ false     │
-├────────┼────┼──────────────────────────────────────────────────────────────┼───────────┤
-│ 1      │ 3  │ fugiat veniam minus                                          │ false     │
-├────────┼────┼──────────────────────────────────────────────────────────────┼───────────┤
-│ 1      │ 4  │ et porro tempora                                             │ true      │
-├────────┼────┼──────────────────────────────────────────────────────────────┼───────────┤
-│ 1      │ 5  │ laboriosam mollitia et enim quasi adipisci quia provident il │ false     │
-│        │    │ lum                                                          │           │
-└────────┴────┴──────────────────────────────────────────────────────────────┴───────────┘
+┌────┬────────┬──────────────────────────────────────────────────────────────┬───────────┐
+│ id │ userId │                            title                             │ completed │
+├────┼────────┼──────────────────────────────────────────────────────────────┼───────────┤
+│ 1  │ 1      │ delectus aut autem                                           │ false     │
+├────┼────────┼──────────────────────────────────────────────────────────────┼───────────┤
+│ 2  │ 1      │ quis ut nam facilis et officia qui                           │ false     │
+├────┼────────┼──────────────────────────────────────────────────────────────┼───────────┤
+│ 3  │ 1      │ fugiat veniam minus                                          │ false     │
+├────┼────────┼──────────────────────────────────────────────────────────────┼───────────┤
+│ 4  │ 1      │ et porro tempora                                             │ true      │
+├────┼────────┼──────────────────────────────────────────────────────────────┼───────────┤
+│ 5  │ 1      │ laboriosam mollitia et enim quasi adipisci quia provident il │ false     │
+│    │        │ lum                                                          │           │
+└────┴────────┴──────────────────────────────────────────────────────────────┴───────────┘
 ```
 
 Boolean maps to `INT`s follow the standard C style bools where...
@@ -106,8 +106,8 @@ Boolean maps to `INT`s follow the standard C style bools where...
 DROP TABLE IF EXISTS todos;
 CREATE VIRTUAL TABLE todos USING fetch (
     url TEXT DEFAULT 'https://jsonplaceholder.typicode.com/todos',
-    "userId" INT,
     id INT,
+    "userId" INT,
     title TEXT,
     completed INT
 );
@@ -118,20 +118,20 @@ SELECT * FROM todos LIMIT 5;
 
 ```bash
 sqlite> SELECT * FROM todos LIMIT 5;
-┌────────┬────┬──────────────────────────────────────────────────────────────┬───────────┐
-│ userId │ id │                            title                             │ completed │
-├────────┼────┼──────────────────────────────────────────────────────────────┼───────────┤
-│ 1      │ 1  │ delectus aut autem                                           │ 0         │
-├────────┼────┼──────────────────────────────────────────────────────────────┼───────────┤
-│ 1      │ 2  │ quis ut nam facilis et officia qui                           │ 0         │
-├────────┼────┼──────────────────────────────────────────────────────────────┼───────────┤
-│ 1      │ 3  │ fugiat veniam minus                                          │ 0         │
-├────────┼────┼──────────────────────────────────────────────────────────────┼───────────┤
-│ 1      │ 4  │ et porro tempora                                             │ 1         │
-├────────┼────┼──────────────────────────────────────────────────────────────┼───────────┤
-│ 1      │ 5  │ laboriosam mollitia et enim quasi adipisci quia provident il │ 0         │
-│        │    │ lum                                                          │           │
-└────────┴────┴──────────────────────────────────────────────────────────────┴───────────┘
+┌────┬────────┬──────────────────────────────────────────────────────────────┬───────────┐
+│ id │ userId │                            title                             │ completed │
+├────┼────────┼──────────────────────────────────────────────────────────────┼───────────┤
+│ 1  │ 1      │ delectus aut autem                                           │ 0         │
+├────┼────────┼──────────────────────────────────────────────────────────────┼───────────┤
+│ 2  │ 1      │ quis ut nam facilis et officia qui                           │ 0         │
+├────┼────────┼──────────────────────────────────────────────────────────────┼───────────┤
+│ 3  │ 1      │ fugiat veniam minus                                          │ 0         │
+├────┼────────┼──────────────────────────────────────────────────────────────┼───────────┤
+│ 4  │ 1      │ et porro tempora                                             │ 1         │
+├────┼────────┼──────────────────────────────────────────────────────────────┼───────────┤
+│ 5  │ 1      │ laboriosam mollitia et enim quasi adipisci quia provident il │ 0         │
+│    │        │ lum                                                          │           │
+└────┴────────┴──────────────────────────────────────────────────────────────┴───────────┘
 ```
 
 ## Objects and Arrays
@@ -181,6 +181,7 @@ CREATE VIRTUAL TABLE users USING fetch (
     address TEXT,
     company TEXT
 );
+SELECT * FROM users LIMIT 2;
 ```
 
 SQLite will just save it as plaintext:
@@ -218,6 +219,7 @@ If you want to extract nested object values, use a `GENERATED ALWAYS AS` column
 in conjunction with the `json_extract` SQLite function like so:
 
 ```sql
+DROP TABLE IF EXISTS users;
 CREATE VIRTUAL TABLE users USING fetch (
     url TEXT DEFAULT 'https://jsonplaceholder.typicode.com/users',
     id INT,
@@ -229,6 +231,7 @@ CREATE VIRTUAL TABLE users USING fetch (
     address_geo_lng TEXT GENERATED ALWAYS AS (address->'geo'->'lng')
     -- highlight-end
 );
+SELECT * FROM users LIMIT 2;
 ```
 
 ```bash
@@ -255,9 +258,10 @@ its resources. So attempting to make this `patients` table.
 ```sql
 CREATE VIRTUAL TABLE patients USING fetch (
     url TEXT DEFAULT 'https://r4.smarthealthit.org/Patient',
-    "resourceType" TEXT,
-    id TEXT
+    id TEXT,
+    "resourceType" TEXT
 );
+SELECT * FROM patients;
 ```
 
 Will result in this result set:

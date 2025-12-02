@@ -358,12 +358,11 @@ column_def **init_columns(int argc, const char *const *argv, size_t *num_columns
             return NULL;
         }
 
-        if (tokens_size >= 2) {
-            // normalize typename and constraint to lowercase
-            tokens[COL_TYPE] = lowercase_own(tokens[COL_TYPE]);
-            if (tokens_size >= 3) {
-                tokens[COL_CST] = lowercase_own(tokens[COL_CST]);
-            }
+        // 0   1    2       3      4  5
+        // id int default   0
+        // id int generated always as ()
+        for (int i = 1; i < MIN(5, tokens_size); i++) {
+            tokens[i] = lowercase_own(tokens[i]);
         }
 
         const char *column_name = str(tokens[COL_NAME]);
@@ -716,7 +715,6 @@ static void json_bool_result(
     column_def *def,
     yyjson_val *column_val
 ) {
-    printf("here %s\n", str(def->typename));
     if (strncmp(str(def->typename), "int", 3) == 0 || strncmp(str(def->typename), "float", 5) == 0) {
         sqlite3_result_int(pctx, yyjson_get_bool(column_val));
     } else {

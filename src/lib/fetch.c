@@ -89,7 +89,7 @@ int use_fetch(int fds[4], struct dispatch *dispatch) {
     if (set_nonblocking(dispatch->sockfd) < 0) {
         return perror_rc(-1, "set_nonblocking()", close(dispatch->sockfd), dispatch_free(dispatch));
     }
-    prefixed *GET = prefix(
+    pre *GET = prefix(
         "GET %s HTTP/1.1\r\n"
         "Host: %s\r\n"
         "User-Agent: yarts/1.0\r\n"
