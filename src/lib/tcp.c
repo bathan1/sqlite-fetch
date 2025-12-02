@@ -1,10 +1,11 @@
+#include "tcp.h"
+#include "prefix.h"
+#include "error_handler.h"
+
 #include <asm-generic/errno-base.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#include "helpers.tcp.h"
-#include "helpers.fetch.h"
 
 int tcp_getaddrinfo(const char *hostname, const char *port,
                     struct addrinfo **addr)
@@ -53,9 +54,7 @@ int tcp_socket(struct addrinfo *addrinfo) {
             "PROTOCOL=%p\n"
             ")"
         );
-        perror(str(errmsg));
-        free(errmsg);
-        return -1;
+        return perror_rc(-1, str(errmsg), free(errmsg));
     }
     return sockfd;
 }

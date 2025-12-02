@@ -3,8 +3,8 @@
 #include <yyjson.h>
 #include <yajl/yajl_parse.h>
 
-#include "helpers.bassoon.h"
-#include "helpers.errors.h"
+#include "bassoon.h"
+#include "error_handler.h"
 
 #ifndef MAX
 #define MAX(a, b) (a > b ? a : b)
@@ -347,13 +347,12 @@ static yajl_callbacks callbacks = {
 
 static struct bassoon_state *use_state(void) {
     struct bassoon_state *st = calloc(1, sizeof(struct bassoon_state));
-    if (!st) return null(ENOMEM);
+    if (!st) return perror_rc(NULL, "calloc()", 0);
 
     st->keys_cap = 1 << 8;     // 256
     st->keys = calloc(st->keys_cap, sizeof(char *));
     if (!st->keys) {
-        free(st);
-        return null(ENOMEM);
+        return perror_rc(NULL, "calloc()", free(st));
     }
 
     // IMPORTANT: do NOT allocate st->queue here.

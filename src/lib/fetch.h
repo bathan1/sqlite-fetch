@@ -4,7 +4,7 @@
  */
 
 #pragma once
-#include "helpers.prefix.h"
+#include "prefix.h"
 #include <openssl/types.h>
 #include <stdbool.h>
 #include <stdio.h>

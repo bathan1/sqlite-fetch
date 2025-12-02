@@ -1,17 +1,16 @@
 #define _GNU_SOURCE
 
-#include <asm-generic/errno.h>
+#include "tcp.h"
+#include "tls.h"
+#include "fetch.h"
+#include "error_handler.h"
+
 #include <netdb.h>
 #include <openssl/types.h>
-#include "helpers.errors.h"
-#include "helpers.tcp.h"
-#include "helpers.tls.h"
-#include "helpers.fetch.h"
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <pthread.h>
 #include <fcntl.h>
-#include <errno.h>
 #include <stdbool.h>
 #include <unistd.h>
 #include <string.h>
@@ -49,24 +48,21 @@ static struct url *url_of_string(const char *url);
 struct dispatch *fetch_socket(const char *url, const char *init[4]) {
     struct dispatch *disp = calloc(1, sizeof(struct dispatch));
     if (!disp) {
-        return null(ENOMEM);
+        return perror_rc(NULL, "calloc()", 0);
     }
 
     struct url *URL = url_of_string(url);
     if (!URL) {
-        free(disp);
-        return null(ENOMEM);
+        return perror_rc(NULL, "url_of_string()", free(disp));
     }
     disp->url = *URL;
     if (tcp_getaddrinfo(str(disp->url.hostname), str(disp->url.port), &disp->addrinfo)) {
-        dispatch_free(disp);
-        return null(EINVAL);
+        return perror_rc(NULL, "tcp_getaddrinfo()", dispatch_free(disp));
     }
 
     disp->sockfd = tcp_socket(disp->addrinfo);
     if (disp->sockfd < 0) {
-        dispatch_free(disp);
-        return null(EINVAL);
+        return perror_rc(NULL, "tcp_socket()", dispatch_free(disp));
     }
     // just free the head, we need to keep the values alive
     // in dispatch
@@ -80,24 +76,18 @@ static int set_nonblocking(int fd) {
 }
 int use_fetch(int fds[4], struct dispatch *dispatch) {
     if (connect(dispatch->sockfd, dispatch->addrinfo->ai_addr, dispatch->addrinfo->ai_addrlen) < 0) {
-        close(dispatch->sockfd);
-        dispatch_free(dispatch);
-        return one(ECONNREFUSED);
+        return perror_rc(-1, "connect()", close(dispatch->sockfd), dispatch_free(dispatch));
     }
     bool is_tls = strncmp(str(dispatch->url.protocol), "https:", 6) == 0;
     if (is_tls) {
         if (tls_connect(&dispatch->ssl, dispatch->sockfd, &dispatch->ctx, str(dispatch->url.hostname))) {
-            close(dispatch->sockfd);
-            dispatch_free(dispatch);
-            return one(ECONNABORTED);
+            return perror_rc(-1, "tls_connect()", close(dispatch->sockfd), dispatch_free(dispatch));
         } // else { ok! }
     }
 
     // make recv() nonblocking
     if (set_nonblocking(dispatch->sockfd) < 0) {
-        close(dispatch->sockfd);
-        dispatch_free(dispatch);
-        return one(EIO);
+        return perror_rc(-1, "set_nonblocking()", close(dispatch->sockfd), dispatch_free(dispatch));
     }
     prefixed *GET = prefix(
         "GET %s HTTP/1.1\r\n"
@@ -110,17 +100,12 @@ int use_fetch(int fds[4], struct dispatch *dispatch) {
         str(dispatch->url.host)
     );
     if (!GET) {
-        close(dispatch->sockfd);
-        dispatch_free(dispatch);
-        return one(ENOMEM);
+        return perror_rc(-1, "prefix()", close(dispatch->sockfd), dispatch_free(dispatch));
     }
 
     if (send_maybe_tls(dispatch->ssl, dispatch->sockfd, str(GET), len(GET)) < 0) {
         if (errno != EAGAIN) {
-            free(GET);
-            close(dispatch->sockfd);
-            dispatch_free(dispatch);
-            return one(EIO);
+            return perror_rc(-1, "send_maybe_tls()", free(GET), close(dispatch->sockfd), dispatch_free(dispatch));
         }
         // TODO?
     }
@@ -128,36 +113,22 @@ int use_fetch(int fds[4], struct dispatch *dispatch) {
 
     int sv[2] = {0};
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
-        close(dispatch->sockfd);
-        dispatch_free(dispatch);
-        return one(ENOMEM);
+        return perror_rc(-1, "socketpair()", close(dispatch->sockfd), dispatch_free(dispatch));
     }
     int appfd = sv[0];
     int fetchfd = sv[1];
     if (set_nonblocking(fetchfd)) {
-        close(appfd);
-        close(fetchfd);
-        close(dispatch->sockfd);
-        dispatch_free(dispatch);
-        return one(EIO);
+        return perror_rc(-1, "set_nonblocking()", close(appfd), close(fetchfd), close(dispatch->sockfd), dispatch_free(dispatch));
+
     }
 
     int pollfd = epoll_create1(0);
     if (pollfd < 0) {
-        close(appfd);
-        close(fetchfd);
-        close(dispatch->sockfd);
-        dispatch_free(dispatch);
-        return one(ENOMEM);
+        return perror_rc(-1, "epoll_create1()", close(appfd), close(fetchfd), close(dispatch->sockfd), dispatch_free(dispatch));
     }
     struct epoll_event ev = { .events=EPOLLIN, .data.fd=dispatch->sockfd };
     if (epoll_ctl(pollfd, EPOLL_CTL_ADD, dispatch->sockfd, &ev)) {
-        close(pollfd);
-        close(appfd);
-        close(fetchfd);
-        close(dispatch->sockfd);
-        dispatch_free(dispatch);
-        return one(EIO);
+        return perror_rc(-1, "epoll_create1()", close(pollfd), close(appfd), close(fetchfd), close(dispatch->sockfd), dispatch_free(dispatch));
     }
 
     fds[0] = dispatch->sockfd;
@@ -166,7 +137,6 @@ int use_fetch(int fds[4], struct dispatch *dispatch) {
     fds[3] = pollfd;
     return 0;
 }
-
 
 static bool handle_http_headers(struct fetch_state *st);
 static void handle_http_body_bytes(struct fetch_state *st,

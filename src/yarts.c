@@ -19,8 +19,7 @@ SQLITE_EXTENSION_INIT1
 #include <wchar.h>
 
 /* utils */
-#include "helpers.h"
-#include "yarts.h"
+#include "api.h"
 
 #ifndef MIN
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
@@ -354,7 +353,7 @@ column_def **init_columns(int argc, const char *const *argv, size_t *num_columns
         size_t tokens_size = 0;
         prefixed **tokens = split_on_ch(arg, ' ', &tokens_size);
         if (!tokens) {
-            return null(ENOMEM);
+            return NULL;
         }
 
         if (tokens_size > 0 &&
@@ -376,7 +375,7 @@ column_def **init_columns(int argc, const char *const *argv, size_t *num_columns
                 }
                 for (int t = 0; t < tokens_size; t++) free(tokens[t]);
                 free(tokens);
-                return null(EINVAL);
+                return NULL;
             }
             has_default = true;
         }
@@ -403,7 +402,7 @@ column_def **init_columns(int argc, const char *const *argv, size_t *num_columns
         if (!columns[i]) {
             for (int t = 0; t < tokens_size; t++) free(tokens[t]);
             free(tokens);
-            return null(ENOMEM);
+            return NULL;
         }
 
         columns[i]->name = tokens[COL_NAME];
@@ -873,90 +872,4 @@ int sqlite3_yarts_init(sqlite3 *db, char **pzErrMsg,
     // oh yeah baby
     int rc = sqlite3_create_module(db, "fetch", &fetch_vtab_module, 0);
     return rc;
-}
-
-int bhop(FILE *files[2]) {
-    struct bassoon *bass = calloc(1, sizeof(struct bassoon));
-    if (!bass) {
-        bassoon_free(bass);
-        return one(ENOMEM);
-    }
-    bassoon_init(bass);
-
-    FILE *writable = bhop_writable(bass);
-    if (!writable) {
-        perror("open_writable");
-        bassoon_free(bass);
-        return one(ENOMEM);
-    }
-    FILE *readable = bhop_readable(bass);
-    if (!readable) {
-        perror("open_readable");
-        bassoon_free(bass);
-        return one(ENOMEM);
-    }
-
-    files[0] = writable;
-    files[1] = readable;
-    return 0;
-}
-
-FILE *fetch(const char *url, const char *init[4]) {
-    int fds[4] = {0};
-    struct dispatch *dispatch = fetch_socket(url, init);
-    if (!dispatch) {
-        perror("fetch_socket()");
-        return NULL;
-    }
-    char *hostname = strdup(str(dispatch->url.hostname));
-    int rc = use_fetch(fds, dispatch);
-    if (rc != 0) {
-        perror("use_fetch()");
-        return NULL;
-    }
-    struct fetch_state *fs = calloc(1, sizeof(struct fetch_state));
-    if (!fs) {
-        perror("calloc()");
-        return NULL;
-    }
-
-    fs->ssl = dispatch->ssl;
-    fs->ssl_ctx = dispatch->ctx;
-    fs->netfd = fds[0];
-    int appfd = fds[1];
-    fs->outfd = fds[2];
-    fs->ep = fds[3];
-    fs->headers_done = false;
-    fs->header_len = 0;
-    fs->hostname = hostname;
-
-    // Initialize body parsing state
-    fs->chunked_mode = false;
-    fs->current_chunk_size = 0;
-    fs->reading_chunk_size = true;
-    fs->chunk_line_len = 0;
-
-    if (bhop(fs->bass)) {
-        perror("bhop()");
-        close(appfd);
-        return NULL;
-    }
-
-    fs->http_done = false;
-
-    // spawn background worker thread
-    pthread_t tid;
-    pthread_create(&tid, NULL, fetcher, fs);
-
-    // detach so it cleans up after finishing
-    pthread_detach(tid);
-
-    FILE *fetchfile = fdopen(appfd, "r");
-    if (!fetchfile) {
-        perror("fdopen()");
-        close(appfd);
-        return NULL;
-    }
-    dispatch_free(dispatch);
-    return fetchfile;
 }

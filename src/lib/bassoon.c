@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "helpers.bassoon.h"
+#include "bassoon.h"
 
 void bassoon_init(struct bassoon *bass) {
     bass->cap = 8;

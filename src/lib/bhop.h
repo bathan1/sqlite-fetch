@@ -6,7 +6,7 @@
  */
 
 #include <stdio.h>
-#include "helpers.bassoon.h"
+#include "bassoon.h"
 
 /**
  * @brief Returns a readable FILE handle bound to BASSOON queue.

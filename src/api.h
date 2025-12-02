@@ -1,9 +1,8 @@
 /**
- * @file yarts.h
+ * @file api.h
  * @brief Yet Another Runtime TCP Stream
  *
- * Exposes both the SQLite extension loader and primary networking functions.
- * See the [README](README.md) on installing onto the usr lib.
+ * Helper functions #yarts.c has available.
  *
  * @example bassoon_print.c
  * `gcc bassoon_print.c -lyarts -o bassoon_print`
@@ -12,6 +11,7 @@
  * `gcc fetch_print.c -lyarts -o fetch_print`
  */
 
+ #include "lib/prefix.h"
  #include <stdio.h>
 
  /* FETCH FRAME OPTIONS. These are just plain integers
@@ -64,14 +64,3 @@ int bhop(FILE *files[2]);
  * @snippet fetch_print.c fetch basic usage
  */
 FILE *fetch(const char *url, const char *init[4]);
-
-struct sqlite3;
-struct sqlite3_api_routines;
-
-/**
- * @brief YARTS entry point into SQLite for database DB.
- *
- * Registers the `Fetch` Virtual Table against the database DB.
- */
-int sqlite3_yarts_init(struct sqlite3 *db, char **pzErrMsg,
-                        const struct sqlite3_api_routines *pApi);
