@@ -2,4 +2,4 @@
 -- The script is meant to be concatenated with actual queries.
 
 .mode box
-.load ./libyarts
+.load ./libyartssql

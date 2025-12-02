@@ -1,4 +1,5 @@
 #include "prefix.h"
+#include "error_handler.h"
 #include <errno.h>
 #include <ctype.h>
 #include <stdarg.h>
@@ -6,12 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-prefixed *prefix_static(const char *s, size_t len) {
+pre *prefix_static(const char *s, size_t len) {
     size_t total = sizeof(size_t) + len + 1;  // prefix + chars + null
     char *buf = malloc(total);
     if (!buf) {
-        errno = ENOMEM;
-        return NULL;
+        return perror_rc(NULL, "malloc()", 0);
     }
 
     /* Write prefix (binary size_t) */
@@ -23,10 +23,10 @@ prefixed *prefix_static(const char *s, size_t len) {
     /* Null-terminate payload */
     buf[sizeof(size_t) + len] = '\0';
 
-    return (prefixed *)buf;
+    return (pre *)buf;
 }
 
-prefixed *prefix(const char *fmt, ...) {
+pre *prefix(const char *fmt, ...) {
     va_list ap, ap2;
 
     // --- First pass: measure ---
@@ -66,7 +66,7 @@ prefixed *prefix(const char *fmt, ...) {
     return p;
 }
 
-prefixed *remove_all(const prefixed *s, char ch) {
+pre *rmch(const pre *s, char ch) {
     size_t length = len(s);
     const char *raw = str(s);  // <-- correct way to access payload
 
@@ -99,10 +99,19 @@ prefixed *remove_all(const prefixed *s, char ch) {
     char *shrunk = realloc(new, final_size);
     if (shrunk) new = shrunk;
 
-    return (prefixed *)new;
+    return (pre *)new;
 }
 
-prefixed **split_on_ch(const char *str, char delim, size_t *token_count) {
+pre *rmch_own(pre *s, char ch) {
+    pre *next = rmch(s, ch);
+    if (!next) {
+        return perror_rc(NULL, "rmch()", 0);
+    }
+    free(s);
+    return next;
+}
+
+pre **split_on_ch(const char *str, char delim, size_t *token_count) {
     if (!str) return NULL;
 
     // First pass: count tokens
@@ -147,11 +156,29 @@ prefixed **split_on_ch(const char *str, char delim, size_t *token_count) {
     return result;
 }
 
-prefixed *lowercase(prefixed *s) {
-    char *lowercased = malloc(len(s)+ 1);
-    for (int i = 0; i < len(s); i++) {
-        lowercased[i] = tolower(s[i]);
+pre *lowercase(const pre *s) {
+    size_t n = len(s);
+    pre *out = malloc(sizeof(size_t) + n + 1);
+    if (!out) return perror_rc(NULL, "malloc", 0);
+
+    memcpy(out, &n, sizeof(size_t));                // length
+
+    char *dst = (char *)out + sizeof(size_t);
+    const char *src = str(s);
+
+    for (size_t i = 0; i < n; i++)
+        dst[i] = tolower((unsigned char)src[i]);
+
+    dst[n] = '\0';
+
+    return out;
+}
+
+pre *lowercase_own(pre *s) {
+    pre *next = lowercase(s);
+    if (!next) {
+        return perror_rc(NULL, "lowercase", 0);
     }
-    lowercased[len(s)] = 0;
-    return lowercased;
+    free(s);
+    return next;
 }

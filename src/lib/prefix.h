@@ -17,19 +17,24 @@
  * |----0-----|----1----| ... |----7----|----8----|----9----|----10----|
  * |    0     |    0    | ... |    2    |   'h'   |   'i'   |    0     |
  */
-typedef char prefixed;
+typedef char pre;
 
 /**
+ * @brief Get a *const* pointer to the string portion of a pre string.
+ *
  * Labeled pointer prefix addition of \c sizeof(size_t) to S
  * so you don't need to remember to add it each time.
+ *
+ * It is \c const because you can't \c free() it -- you have to
+ * free from the head.
  */
-#define str(s) (s + sizeof(size_t))
+#define str(s) ((const char *)(s + sizeof(size_t)))
 
 /** Constant time size lookup that does the type casting for you. */
 #define len(buf) (*(size_t *)buf)
 
 /**
- * @brief Allocate a prefixed string S of known length LEN.
+ * @brief Allocate a pre string S of known length LEN.
  *
  * *Copies* S, so you can free S after this.
  *
@@ -39,10 +44,10 @@ typedef char prefixed;
  * # Errors
  * - `ENOMEM` - Out of memory.
  */
-prefixed *prefix_static(const char *s, size_t len);
+pre *prefix_static(const char *s, size_t len);
 
 /**
- * @brief Allocate a prefixed string with the given format string FMT.
+ * @brief Allocate a pre string with the given format string FMT.
  *
  * It's like \c sprintf() except that it *returns* the buffer rather than making you pass it in.
  * FMT can be freed after this.
@@ -54,22 +59,29 @@ prefixed *prefix_static(const char *s, size_t len);
  * - `EINVAL` - Malformed format string FMT.
  * - `ENOMEM` - Out of memory.
  */
-prefixed *prefix(const char *fmt, ...);
+pre *prefix(const char *fmt, ...);
 
 /**
- * Returns a *new* string with CH removed from *length prefixed* STR,
+ * Returns a *new* string with CH removed from *length pre* STR,
  * Sets N to the new size if it is passed in. Otherwise, it will
  * compute `strlen` on STR to handle the removal.
  *
  * @retval SOME_BUFFER OK.
  */
-prefixed *remove_all(const prefixed *str, char ch);
+pre *rmch(const pre *str, char ch);
+
+/** @brief #rmch() but it takes ownership of the S. */
+pre *rmch_own(pre *s, char ch);
+
 /**
  * @brief Split S on CH into TOKEN_COUNT tokens.
  *
  * Writes out total number of tokens to TOKEN_COUNT, if the ptr is not `NULL`.
  */
-prefixed **split_on_ch(const char *s, char ch, size_t *token_count);
+pre **split_on_ch(const char *s, char ch, size_t *token_count);
 
-/** @brief Convert a prefixed string S to prefixed lowercase. */
-prefixed *lowercase(prefixed *s);
+/** @brief Convert a pre string S to prefixed lowercase. */
+pre *lowercase(const pre *s);
+
+/** @brief #lowercase() but it takes ownership of the S. */
+pre *lowercase_own(pre *s);

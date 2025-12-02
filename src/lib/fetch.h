@@ -19,14 +19,14 @@ struct url {
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/host}
      */
-    prefixed *host;
+    pre *host;
 
     /**
      * @brief A string containing the domain of the URL.
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/hostname}
      */
-    prefixed *hostname;
+    pre *hostname;
 
     /**
      * @brief A string containing an initial '/' followed by the path of the URL,
@@ -34,21 +34,21 @@ struct url {
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/pathname}
      */
-    prefixed *pathname;
+    pre *pathname;
 
     /**
      * @brief A string containing the port number of the URL.
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/port}
      */
-    prefixed *port;
+    pre *port;
 
     /**
      * @brief A string containing the protocol scheme of the URL, including the final ':'.
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/protocol}
      */
-    prefixed *protocol;
+    pre *protocol;
 };
 void url_free(struct url *url);
 

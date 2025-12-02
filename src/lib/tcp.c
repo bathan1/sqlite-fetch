@@ -11,7 +11,7 @@ int tcp_getaddrinfo(const char *hostname, const char *port,
                     struct addrinfo **addr)
 {
     if (!hostname || !port || !addr) {
-        prefixed *errmsg = prefix(
+        pre *errmsg = prefix(
             "tcp_getaddrinfo(\n",
             "    "
             "hostname=%s,\n"
@@ -44,7 +44,7 @@ int tcp_socket(struct addrinfo *addrinfo) {
         addrinfo->ai_protocol
     );
     if (sockfd < 0) {
-        prefixed *errmsg = prefix(
+        pre *errmsg = prefix(
             "Error opening socket(\n",
             "    "
             "DOMAIN=%p,\n"

@@ -21,6 +21,7 @@ SQLITE_EXTENSION_INIT1
 /* utils */
 #include "yarts.h"
 #include "lib/prefix.h"
+#include "lib/error_handler.h"
 
 #ifndef MIN
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
@@ -143,12 +144,12 @@ yyjson_doc *read_next_json_object(FILE *stream, char **errmsg) {
 }
 
 typedef struct {
-    prefixed *name;
-    prefixed *typename;
+    pre *name;
+    pre *typename;
 
-    prefixed *default_value;
+    pre *default_value;
 
-    prefixed **generated_always_as;
+    pre **generated_always_as;
     size_t generated_always_as_len;
 
 } column_def;
@@ -252,8 +253,8 @@ enum {
 #include <stdbool.h>
 
 static void split_generated_path(
-    const prefixed *expr,
-    prefixed ***out_parts,
+    const pre *expr,
+    pre ***out_parts,
     size_t *out_count
 ) {
     /* Length *excluding* prefix */
@@ -269,8 +270,8 @@ static void split_generated_path(
         }
     }
 
-    /* Allocate array of prefixed* */
-    prefixed **parts = malloc(sizeof(prefixed*) * count);
+    /* Allocate array of pre* */
+    pre **parts = malloc(sizeof(pre*) * count);
     if (!parts) {
         errno = ENOMEM;
         *out_parts = NULL;
@@ -279,7 +280,7 @@ static void split_generated_path(
     }
 
     /* ------------------------------------------------------
-       2. Extract each segment into a NEW prefixed string
+       2. Extract each segment into a NEW pre string
        ------------------------------------------------------ */
     size_t start = 0;
     size_t idx = 0;
@@ -296,9 +297,9 @@ static void split_generated_path(
             size_t seg_len = i - start;
 
             /* --------------------------------------------
-               2A. Copy substring into its own prefixed str
+               2A. Copy substring into its own pre str
                -------------------------------------------- */
-            prefixed *token = prefix_static(s + start, seg_len);
+            pre *token = prefix_static(s + start, seg_len);
             if (!token) {
                 errno = ENOMEM;
                 /* cleanup partial results */
@@ -313,15 +314,15 @@ static void split_generated_path(
                2B. Clean it with remove_all()
                remove_all() always returns a NEW buffer.
                -------------------------------------------- */
-            prefixed *clean1 = remove_all(token, '\'');
+            pre *clean1 = rmch(token, '\'');
             free(token);
             token = clean1;
 
-            prefixed *clean2 = remove_all(token, '\n');
+            pre *clean2 = rmch(token, '\n');
             free(token);
             token = clean2;
 
-            prefixed *clean3 = remove_all(token, '\r');
+            pre *clean3 = rmch(token, '\r');
             free(token);
             token = clean3;
 
@@ -352,9 +353,30 @@ column_def **init_columns(int argc, const char *const *argv, size_t *num_columns
         const char *arg = argv[i];
 
         size_t tokens_size = 0;
-        prefixed **tokens = split_on_ch(arg, ' ', &tokens_size);
-        if (!tokens) {
+        pre **tokens = split_on_ch(arg, ' ', &tokens_size);
+        if (!tokens || tokens_size < 1) {
             return NULL;
+        }
+
+        if (tokens_size >= 3) {
+            // normalize typename and constraint to lowercase
+            tokens[COL_TYPE] = lowercase_own(tokens[COL_TYPE]);
+            tokens[COL_CST] = lowercase_own(tokens[COL_CST]);
+        }
+
+        const char *column_name = str(tokens[COL_NAME]);
+        if (column_name[COL_NAME] == '\"') {
+            if (column_name[len(tokens[COL_NAME]) - 1] != '\"') {
+                fprintf(stderr, "Open dquote missing closing dquote in column name %s\n", column_name);
+                for (int t = 0; t < tokens_size; t++) free(tokens[t]);
+                free(tokens);
+                return NULL;
+            }
+            tokens[COL_NAME] = rmch_own(tokens[COL_NAME], '\"');
+            if (!tokens[COL_NAME]) {
+                for (int t = 0; t < tokens_size; t++) free(tokens[t]);
+                return perror_rc(NULL, "prefix_static_own", 0);
+            }
         }
 
         if (tokens_size > 0 &&
@@ -409,19 +431,19 @@ column_def **init_columns(int argc, const char *const *argv, size_t *num_columns
         columns[i]->name = tokens[COL_NAME];
         columns[i]->typename = tokens[COL_TYPE];
         if (has_default) {
-            prefixed *normalized = remove_all(tokens[COL_CST_VAL], '\'');
+            pre *normalized = rmch(tokens[COL_CST_VAL], '\'');
             free(tokens[COL_CST_VAL]); // don't need anymore
             columns[i]->default_value = normalized;
         }
         if (has_generated_value) {
-            char *expr_raw = str(tokens[COL_GEN_CST_VAL]);
+            const char *expr_raw = str(tokens[COL_GEN_CST_VAL]);
             size_t expr_len = len(tokens[COL_GEN_CST_VAL]);
             if (expr_len >= 2 && expr_raw[0] == '(' && expr_raw[expr_len - 1] == ')') {
                 expr_raw++;           // move start
                 expr_len -= 2;        // remove both '(' and ')'
             }
 
-            prefixed *expr = prefix_static(expr_raw, expr_len);
+            pre *expr = prefix_static(expr_raw, expr_len);
             char **parts = 0;
             size_t count = 0;
 
@@ -479,8 +501,8 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     sqlite3_str_appendall(s, first_line + sizeof(size_t));
     for (int i = 3; i < vtab->columns_len; i++) {
         column_def *def = vtab->columns[i];
-        char *name = str(def->name);
-        char *typename = str(def->typename);
+        const char *name = str(def->name);
+        const char *typename = str(def->typename);
         sqlite3_str_appendf(s, "%s %s", str(def->name), str(def->typename));
 
         if (i + 1 < vtab->columns_len)
@@ -701,7 +723,7 @@ static void json_bool_result(
 
 static yyjson_val *follow_generated_path(
     yyjson_val *root,
-    prefixed **keys,
+    pre **keys,
     size_t count
 ) {
     yyjson_val *cur = root;
@@ -712,7 +734,7 @@ static yyjson_val *follow_generated_path(
             return NULL;
         }
 
-        /* Access raw chars + length from prefixed API */
+        /* Access raw chars + length from pre API */
         const char *key_raw = str(keys[i]);
         size_t key_len = len(keys[i]);
 
@@ -826,8 +848,8 @@ static int xFilter(sqlite3_vtab_cursor *cur0,
         return SQLITE_ERROR;
     }
 
-    char *url = (argc > 0)
-        ? (char*)sqlite3_value_text(argv[0])
+    const char *url = (argc > 0)
+        ? (const char*)sqlite3_value_text(argv[0])
         : str(vtab->columns[FETCH_URL]->default_value);
 
     Cur->stream = fetch(url, (const char *[]){0});
