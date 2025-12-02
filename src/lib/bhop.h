@@ -4,16 +4,16 @@
  *
  * This is our custom in memory buffer stream over a #bassoon queue.
  */
-
+#pragma once
 #include <stdio.h>
-#include "bassoon.h"
+#include "deque.h"
 
 /**
  * @brief Returns a readable FILE handle bound to BASSOON queue.
  */
-FILE *bhop_readable(struct bassoon *bassoon);
+FILE *bhop_readable(struct deque8 *bassoon);
 
 /**
  * @brief Returns a writable FILE handle bound to BASSOON queue.
  */
-FILE *bhop_writable(struct bassoon *bassoon);
+FILE *bhop_writable(struct deque8 *bassoon);

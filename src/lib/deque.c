@@ -1,14 +1,14 @@
+#include "deque.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include "bassoon.h"
 
-void bassoon_init(struct bassoon *bass) {
-    bass->cap = 8;
-    bass->buffer = calloc(bass->cap, sizeof(char *));
-    bass->hd = bass->tl = bass->count = 0;
+void deque8_init(struct deque8 *deque) {
+    deque->cap = 8;
+    deque->buffer = calloc(deque->cap, sizeof(char *));
+    deque->hd = deque->tl = deque->count = 0;
 }
 
-void bassoon_push(struct bassoon *q, char *val) {
+void deque8_push(struct deque8 *q, char *val) {
     if (q->count == q->cap) {
         size_t oldcap = q->cap;
         size_t newcap = oldcap * 2;
@@ -36,7 +36,7 @@ void bassoon_push(struct bassoon *q, char *val) {
     q->count++;
 }
 
-void bassoon_free(struct bassoon *q) {
+void deque8_free(struct deque8 *q) {
     if (!q || !q->buffer) return;
 
     for (size_t i = 0; i < q->count; i++) {
@@ -50,7 +50,7 @@ void bassoon_free(struct bassoon *q) {
     free(q);
 }
 
-char *bassoon_pop(struct bassoon *q) {
+char *deque8_pop(struct deque8 *q) {
     if (q->count == 0)
         return NULL;
 

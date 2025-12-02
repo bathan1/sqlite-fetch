@@ -8,19 +8,19 @@
 #include <unistd.h>
 
 int bhop(FILE *files[2]) {
-    struct bassoon *bass = calloc(1, sizeof(struct bassoon));
-    if (!bass) {
-        return perror_rc(-1, "calloc", bassoon_free(bass));
+    struct deque8 *dq = calloc(1, sizeof(struct deque8));
+    if (!dq) {
+        return perror_rc(-1, "calloc", deque8_free(dq));
     }
-    bassoon_init(bass);
+    deque8_init(dq);
 
-    FILE *writable = bhop_writable(bass);
+    FILE *writable = bhop_writable(dq);
     if (!writable) {
-        return perror_rc(-1, "bhop_writable", bassoon_free(bass));
+        return perror_rc(-1, "bhop_writable", deque8_free(dq));
     }
-    FILE *readable = bhop_readable(bass);
+    FILE *readable = bhop_readable(dq);
     if (!readable) {
-        return perror_rc(-1, "bhop_readable", fclose(writable), bassoon_free(bass));
+        return perror_rc(-1, "bhop_readable", fclose(writable), deque8_free(dq));
     }
 
     files[0] = writable;

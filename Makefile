@@ -12,7 +12,7 @@ SQLITE_TARGET  := lib$(SQLITE_EXT).so
 # ---- Source Files ----
 SRC_COMMON := \
     src/yarts.c \
-    src/lib/bassoon.c src/lib/bhop.c src/lib/fetch.c \
+    src/lib/deque.c src/lib/bhop.c src/lib/fetch.c \
     src/lib/cfns.c src/lib/tcp.c src/lib/sql.c
 
 SRC_SQLITE := \

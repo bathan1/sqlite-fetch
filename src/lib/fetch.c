@@ -534,7 +534,6 @@ static void flush_bassoon(struct fetch_state *st) {
             return;
         }
 
-
         free(st->pending_buf);
         st->pending_buf = NULL;
         st->pending_len = 0;

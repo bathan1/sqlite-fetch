@@ -3,6 +3,8 @@
  * @brief SQL related functions including a basic parser
  */
 
+ #pragma once
+
  #include "cfns.h"
 
  typedef struct {

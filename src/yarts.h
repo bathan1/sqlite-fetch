@@ -10,8 +10,8 @@
  * @example fetch_print.c
  * `gcc fetch_print.c -lyarts -o fetch_print`
  */
-
- #include <stdio.h>
+#pragma once
+#include <stdio.h>
 
  /* FETCH FRAME OPTIONS. These are just plain integers
   * that are statically cast to `const char *` for convenience.

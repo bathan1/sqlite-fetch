@@ -6,6 +6,7 @@
  * and those with `ttcp` may use TLS, if the context is well defined,
  * using the socket counterparts \c send() \c recv() otherwise.
  */
+#pragma once
 #include <netdb.h>
 #include <openssl/ssl.h>
 #include <openssl/types.h>

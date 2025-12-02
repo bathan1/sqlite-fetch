@@ -3,12 +3,8 @@
 #include <yyjson.h>
 #include <yajl/yajl_parse.h>
 
-#include "bassoon.h"
+#include "deque.h"
 #include "cfns.h"
-
-#ifndef MAX
-#define MAX(a, b) (a > b ? a : b)
-#endif
 
 /** Fixed number of JSON object levels to traverse before returning. */
 #define MAX_DEPTH 64
@@ -20,7 +16,7 @@ struct bassoon_state {
     yajl_handle parser;
     unsigned int current_depth;
     unsigned int depth;
-    struct bassoon *queue;
+    struct deque8 *queue;
 
     // clarinet frees everything from here
     char **keys;
@@ -48,7 +44,7 @@ static int bhop_fcloser(void *cookie);
 static struct bassoon_state *use_state();
 static void free_state(struct bassoon_state *w_bassoon);
 
-FILE *bhop_readable(struct bassoon *init) {
+FILE *bhop_readable(struct deque8 *init) {
     cookie_io_functions_t io = {
         .read  = bhop_fread,
         .close = bhop_fcloser,
@@ -59,7 +55,7 @@ FILE *bhop_readable(struct bassoon *init) {
     return fopencookie(init, "r", io);
 }
 
-FILE *bhop_writable(struct bassoon *init) {
+FILE *bhop_writable(struct deque8 *init) {
     struct bassoon_state *w_bassoon = use_state();
     if (!w_bassoon) {
         perror("use_state");
@@ -108,8 +104,8 @@ static int bhop_fclosew(void *cookie) {
 }
 
 static ssize_t bhop_fread(void *cookie, char *buf, size_t size) {
-    struct bassoon *c = cookie;
-    char *json = bassoon_pop(c);
+    struct deque8 *c = cookie;
+    char *json = deque8_pop(c);
     if (!json)
         return 0;
 
@@ -133,9 +129,9 @@ static ssize_t bhop_fread(void *cookie, char *buf, size_t size) {
 }
 
 static int bhop_fcloser(void *cookie) {
-    struct bassoon *queue = (void *) cookie;
+    struct deque8 *queue = (void *) cookie;
     if (!queue) { return 1; }
-    bassoon_free(queue);
+    deque8_free(queue);
     return 0;
 }
 
@@ -310,7 +306,7 @@ static int handle_end_map(void *ctx) {
 
         char *json = yyjson_write(final, cur->pp_flags, NULL);
         // we push to queue
-        bassoon_push(cur->queue, json);
+        deque8_push(cur->queue, json);
 
         // free(cur->queue.handle);
         yyjson_doc_free(final);
@@ -376,4 +372,3 @@ static void free_state(struct bassoon_state *st) {
 #undef push
 #undef peek
 #undef MAX_DEPTH
-#undef MAX
