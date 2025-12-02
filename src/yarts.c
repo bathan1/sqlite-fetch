@@ -1,6 +1,4 @@
-#include "lib/cfns.h"
 #include "lib/bhop.h"
-#include "lib/prefix.h"
 #include "lib/fetch.h"
 #include <asm-generic/errno-base.h>
 #include <pthread.h>
@@ -36,7 +34,7 @@ FILE *fetch(const char *url, const char *init[4]) {
     if (!dispatch) {
         return perror_rc(NULL, "fetch_socket()", 0);
     }
-    char *hostname = strdup(str(dispatch->url.hostname));
+    char *hostname = strdup(dispatch->url.hostname.hd);
     int rc = use_fetch(fds, dispatch);
     if (rc != 0) {
         perror("use_fetch()");

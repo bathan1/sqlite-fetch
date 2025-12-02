@@ -2,7 +2,6 @@
 
 #include "tcp.h"
 #include "fetch.h"
-#include "cfns.h"
 
 #include <netdb.h>
 #include <openssl/types.h>
@@ -21,11 +20,11 @@ void url_free(struct url *url) {
         return;
     }
 
-    if (url->host) free(url->host);
-    if (url->protocol) free(url->protocol);
-    if (url->hostname) free(url->hostname);
-    if (url->pathname) free(url->pathname);
-    if (url->port) free(url->port);
+    if (url->host.hd) free(url->host.hd);
+    if (url->protocol.hd) free(url->protocol.hd);
+    if (url->hostname.hd) free(url->hostname.hd);
+    if (url->pathname.hd) free(url->pathname.hd);
+    if (url->port.hd) free(url->port.hd);
 }
 
 void dispatch_free(struct dispatch *dispatch) {
@@ -55,7 +54,7 @@ struct dispatch *fetch_socket(const char *url, const char *init[4]) {
         return perror_rc(NULL, "url_of_string()", free(disp));
     }
     disp->url = *URL;
-    if (tcp_getaddrinfo(str(disp->url.hostname), str(disp->url.port), &disp->addrinfo)) {
+    if (tcp_getaddrinfo(disp->url.hostname.hd, disp->url.port.hd, &disp->addrinfo)) {
         return perror_rc(NULL, "tcp_getaddrinfo()", dispatch_free(disp));
     }
 
@@ -82,10 +81,10 @@ int use_fetch(int fds[4], struct dispatch *dispatch) {
     //         return perror_rc(-1, "tls_connect()", close(dispatch->sockfd), dispatch_free(dispatch));
     //     } // else { ok! }
     // }
-    bool is_tls = strncmp(str(dispatch->url.protocol), "https:", 6) == 0;
+    bool is_tls = strncmp(dispatch->url.protocol.hd, "https:", 6) == 0;
     SSL **ssl = is_tls ? &dispatch->ssl : NULL;
     SSL_CTX **ctx = is_tls ? &dispatch->ctx : NULL;
-    const char *hostname = is_tls ? str(dispatch->url.hostname) : NULL;
+    const char *hostname = is_tls ? dispatch->url.hostname.hd : NULL;
     if (ttcp_connect(
         dispatch->sockfd, dispatch->addrinfo->ai_addr, dispatch->addrinfo->ai_addrlen,
         ssl, ctx, hostname) < 0) {
@@ -99,22 +98,22 @@ int use_fetch(int fds[4], struct dispatch *dispatch) {
     if (set_nonblocking(dispatch->sockfd) < 0) {
         return perror_rc(-1, "set_nonblocking()", close(dispatch->sockfd), dispatch_free(dispatch));
     }
-    pre *GET = prefix(
+    struct string GET = dynamic(
         "GET %s HTTP/1.1\r\n"
         "Host: %s\r\n"
         "User-Agent: yarts/1.0\r\n"
         "Accept: */*\r\n"
         "Connection: close\r\n"
         "\r\n",
-        str(dispatch->url.pathname),
-        str(dispatch->url.host)
+        dispatch->url.pathname.hd,
+        dispatch->url.host.hd
     );
-    if (!GET) {
+    if (!GET.hd) {
         return perror_rc(-1, "prefix()", close(dispatch->sockfd), dispatch_free(dispatch));
     }
 
-    if (ttcp_send(dispatch->sockfd, str(GET), len(GET), is_tls ? *ssl : NULL) < 0) {
-        return perror_rc(-1, "ttcp_send()", free(GET), close(dispatch->sockfd), dispatch_free(dispatch));
+    if (ttcp_send(dispatch->sockfd, GET.hd, GET.length, is_tls ? *ssl : NULL) < 0) {
+        return perror_rc(-1, "ttcp_send()", GET.hd, close(dispatch->sockfd), dispatch_free(dispatch));
     }
 
     // if (send_maybe_tls(dispatch->ssl, dispatch->sockfd, str(GET), len(GET)) < 0) {
@@ -123,7 +122,7 @@ int use_fetch(int fds[4], struct dispatch *dispatch) {
     //     }
     //     // TODO?
     // }
-    free(GET);
+    free(GET.hd);
 
     int sv[2] = {0};
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
@@ -256,12 +255,11 @@ static struct url *url_of_string(const char *url) {
     curl_url_get(u, CURLUPART_PATH, &path_c, 0);
     curl_url_get(u, CURLUPART_PORT, &port_c, CURLU_DEFAULT_PORT);
 
-    URL->host = prefix("%s:%s", host_c, port_c);
-    URL->hostname = prefix("%s", host_c);
-    URL->pathname = prefix("%s", path_c);
-    URL->port = prefix("%s", port_c);
-    URL->protocol = prefix("%s", is_tls ? "https:" : "http:");
-
+    URL->host = dynamic("%s:%s", host_c, port_c);
+    URL->hostname = dynamic("%s", host_c);
+    URL->pathname = dynamic("%s", path_c);
+    URL->port = dynamic("%s", port_c);
+    URL->protocol = dynamic("%s", is_tls ? "https:" : "http:");
 
     curl_free(host_c);
     curl_free(path_c);

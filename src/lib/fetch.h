@@ -4,7 +4,7 @@
  */
 
 #pragma once
-#include "prefix.h"
+#include "cfns.h"
 #include <openssl/types.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -19,14 +19,14 @@ struct url {
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/host}
      */
-    pre *host;
+    struct string host;
 
     /**
      * @brief A string containing the domain of the URL.
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/hostname}
      */
-    pre *hostname;
+    struct string hostname;
 
     /**
      * @brief A string containing an initial '/' followed by the path of the URL,
@@ -34,21 +34,21 @@ struct url {
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/pathname}
      */
-    pre *pathname;
+    struct string pathname;
 
     /**
      * @brief A string containing the port number of the URL.
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/port}
      */
-    pre *port;
+    struct string port;
 
     /**
      * @brief A string containing the protocol scheme of the URL, including the final ':'.
      *
      * {@link https://developer.mozilla.org/en-US/docs/Web/API/URL/protocol}
      */
-    pre *protocol;
+    struct string protocol;
 };
 void url_free(struct url *url);
 

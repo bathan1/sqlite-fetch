@@ -3,14 +3,14 @@
  * @brief SQL related functions including a basic parser
  */
 
- #include "prefix.h"
+ #include "cfns.h"
 
  typedef struct {
-     pre *name;
-     pre *typename;
-     pre *default_value;
+     struct string name;
+     struct string typename;
+     struct string default_value;
 
-     pre **generated_always_as;
+     struct string *generated_always_as;
      size_t generated_always_as_len;
  } column_def;
 

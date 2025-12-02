@@ -1,5 +1,4 @@
 #include "tcp.h"
-#include "prefix.h"
 #include "cfns.h"
 
 #include <asm-generic/errno-base.h>
@@ -73,18 +72,7 @@ int tcp_getaddrinfo(const char *hostname, const char *port,
                     struct addrinfo **addr)
 {
     if (!hostname || !port || !addr) {
-        pre *errmsg = prefix(
-            "tcp_getaddrinfo(\n",
-            "    "
-            "hostname=%s,\n"
-            "    "
-            "port=%s,\n"
-            "    "
-            "addr=%p\n"
-            "): Can't pass in NULL.\n"
-        );
-        fprintf(stderr, "%s", str(errmsg));
-        free(errmsg);
+        fprintf(stderr, "HOSTNAME, PORT, or ADDR is NULL\n");
         return EINVAL;
     }
     struct addrinfo hints = {
@@ -106,17 +94,8 @@ int tcp_socket(struct addrinfo *addrinfo) {
         addrinfo->ai_protocol
     );
     if (sockfd < 0) {
-        pre *errmsg = prefix(
-            "Error opening socket(\n",
-            "    "
-            "DOMAIN=%p,\n"
-            "    "
-            "TYPE=%p,\n"
-            "    "
-            "PROTOCOL=%p\n"
-            ")"
-        );
-        return perror_rc(-1, str(errmsg), free(errmsg));
+        fprintf(stderr, "couldn't open socket\n");
+        return -1;
     }
     return sockfd;
 }
