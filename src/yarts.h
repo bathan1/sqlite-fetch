@@ -4,8 +4,8 @@
  *
  * Helper functions #yarts.c has available.
  *
- * @example bassoon_print.c
- * `gcc bassoon_print.c -lyarts -o bassoon_print`
+ * @example bhop_print.c
+ * `gcc bhop_print.c -lyarts -o bhop_print`
  *
  * @example fetch_print.c
  * `gcc fetch_print.c -lyarts -o fetch_print`
@@ -35,7 +35,7 @@ static const char *FRAME_NDJSON = 0;
  * @retval -1  Error. `FILES` is left unchanged and errno is set.
  *
  * ### Example with manual JSON
- * @snippet bassoon_print.c bhop basic usage
+ * @snippet bhop_print.c bhop basic usage
  */
 int bhop(FILE *files[2]);
 
