@@ -1,6 +1,6 @@
 /**
- * @file yarts.h
- * @brief Yet Another Runtime TCP Stream
+ * @file yapi.h
+ * @brief Yet Another Runtime TCP Stream internal functions API
  *
  * Helper functions #yarts.c has available.
  *
