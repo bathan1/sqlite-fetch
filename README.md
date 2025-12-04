@@ -33,7 +33,7 @@ mkdir build && cd build && cmake ..
 sudo make install
 ```
 
-Then `cd` back into the root and run to build the extension file `libyartssql.so`:
+Then `cd` back into the root and run to build the extension file `libyarts.so`:
 
 ```bash
 make
@@ -42,7 +42,8 @@ make
 And that's it!
 
 ## Other Scripts
-To install / uninstall the yarts headers from your usr local lib:
+YARTS has an internal API of helper functions declared under the header file `yapi.h`.
+To install / uninstall the Yarts API header from your usr local lib:
 
 ```bash
 sudo make install
@@ -58,10 +59,10 @@ pnpm run test
 
 ## Library
 The majority of the code is under [`lib`](./src/lib), where a select number of functions
-are exposed to the extension [yartssql.c](./src/yartssql.c) file via the [`yarts.h`](./src/yarts.h) header.
+are exposed to the extension [yarts.c](./src/yarts.c) file via the [`yapi.h`](./src/yapi.h) header.
 
 If you've installed the API via the `make install` command, you can use the helper functions
-in standalone code by compiling with the `-lyarts` flag. To compile the queue printer example script:
+in standalone code by compiling with the `-lyapi` flag. To compile the queue printer example script:
 
 ```
 gcc bassoon_print.c -lyarts

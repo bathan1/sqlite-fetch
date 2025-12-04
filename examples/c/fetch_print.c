@@ -1,6 +1,6 @@
 //! [fetch basic usage]
 #define _GNU_SOURCE
-#include <yarts.h>
+#include <yapi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

@@ -2,18 +2,18 @@
  * @file bhop.h
  * @brief Buffer Handle Open Pipe
  *
- * This is our custom in memory buffer stream over a #bassoon queue.
+ * In memory stream that implements FIFO over a #deque
  */
 #pragma once
 #include <stdio.h>
 #include "deque.h"
 
 /**
- * @brief Returns a readable FILE handle bound to BASSOON queue.
+ * @brief Returns a readable FILE handle bound to DEQUE.
  */
-FILE *bhop_readable(struct deque8 *bassoon);
+FILE *bhop_readable(struct deque8 *deque);
 
 /**
- * @brief Returns a writable FILE handle bound to BASSOON queue.
+ * @brief Returns a writable FILE handle bound to DEQUE.
  */
-FILE *bhop_writable(struct deque8 *bassoon);
+FILE *bhop_writable(struct deque8 *deque);

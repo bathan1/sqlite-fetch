@@ -3,20 +3,20 @@ MAKEFLAGS += -rR
 .SUFFIXES:
 
 # ---- Names ----
-API_EXT     := yarts
-SQLITE_EXT  := yartssql
+API_EXT     := yapi
+SQLITE_EXT  := yarts
 
 API_TARGET     := lib$(API_EXT).so
 SQLITE_TARGET  := lib$(SQLITE_EXT).so
 
 # ---- Source Files ----
 SRC_COMMON := \
-    src/yarts.c \
+    src/yapi.c \
     src/lib/deque.c src/lib/bhop.c src/lib/fetch.c \
     src/lib/cfns.c src/lib/tcp.c src/lib/sql.c
 
 SRC_SQLITE := \
-    src/yartssql.c
+    src/yarts.c
 
 OBJ_COMMON  := $(SRC_COMMON:.c=.o)
 OBJ_SQLITE  := $(SRC_SQLITE:.c=.o)
@@ -55,7 +55,7 @@ install: $(API_TARGET)
 	install -m 755 $(API_TARGET) $(LIBDIR)
 
 	@echo "Installing public header yarts.h to $(INCLUDEDIR)"
-	install -m 644 src/yarts.h $(INCLUDEDIR)/yarts.h
+	install -m 644 src/yapi.h $(INCLUDEDIR)/yapi.h
 
 	@echo "Updating ldconfig cache (Linux only)"
 	@if [ "$(shell uname -s)" = "Linux" ]; then ldconfig; fi

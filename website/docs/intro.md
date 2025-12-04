@@ -24,14 +24,14 @@ Install the extension from the Github releases page and open SQLite.
 The default release is Linux x86_64:
 
 ```bash
-curl -LO https://github.com/bathan1/yarts/releases/latest/download/libyartssql.so
+curl -LO https://github.com/bathan1/yarts/releases/latest/download/libyarts.so
 sqlite3
 ```
 
 Load the extension:
 
 ```sql
-.load ./libyartssql
+.load ./libyarts
 ```
 
 Optionally format the cli:
