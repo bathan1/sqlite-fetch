@@ -33,6 +33,32 @@ struct string {
 struct string dynamic(const char *fmt, ...);
 
 /**
+ * @brief Convert S into lowercase in place.
+ *
+ * @retval 0 On success, all characters are lowercased.
+ * @retval 1 On failure, S couldn't be resolved.
+ */
+int lowercase(struct string *s);
+
+/**
+ * @brief Immutable version of #lowercase(), so S isn't touched.
+ */
+struct string lowercase_im(const struct string s);
+
+/**
+ * @brief Remove all occurrences of CH from S.
+ *
+ * @retval 0 On success, all instances of CH removed.
+ * @retval 1 On failure, S couldn't be resolved.
+ */
+int rmch(struct string *s, char ch);
+
+/**
+ * @brief Copies char buffer S's *pointer* of known size LEN into a #string
+ */
+struct string sstatic(const char *s, size_t len);
+
+/**
  * @brief Slice a *copy* of S from START to END (exclusive).
  */
 struct string slice(const struct string s, size_t start, size_t end);
@@ -53,25 +79,17 @@ struct string *split(const struct string s, const struct string pattern, size_t 
 struct string *splitch(const struct string s, char delim, size_t *ntoks);
 
 /**
- * @brief Convert S into lowercase in place.
+ * @brief Convert S into uppercase in place.
  *
- * @retval 0 On success, all characters are lowercased.
+ * @retval 0 On success, all characters are uppercase.
  * @retval 1 On failure, S couldn't be resolved.
  */
-int lowercase(struct string *s);
+int uppercase(struct string *s);
 
 /**
- * @brief #lowercase() but mutates the returned COPY of S.
+ * @brief Immutable version of #uppercase(), so S isn't touched.
  */
-struct string lowercase_im(const struct string s);
-
-/**
- * @brief Remove all occurrences of CH from S.
- *
- * @retval 0 On success, all instances of CH removed.
- * @retval 1 On failure, S couldn't be resolved.
- */
-int rmch(struct string *s, char ch);
+struct string uppercase_im(const struct string s);
 
 /** @brief min macro */
 #define MIN(a, b) ((a < b) ? a : b)

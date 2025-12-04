@@ -1,4 +1,5 @@
 #include "cfns.h"
+#include <assert.h>
 #include <stdarg.h>
 #include <ctype.h>
 #include <errno.h>
@@ -9,6 +10,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+
+struct string sstatic(const char *s, size_t len) {
+    struct string str = {0};
+    if (!s)
+        return str;
+    return (struct string) { .hd = (char *) s, .length = len };
+}
 
 struct string dynamic(const char *fmt, ...) {
     struct string out = {0};
@@ -155,7 +163,6 @@ struct string *splitch(const struct string s, char delim,
                        size_t *ntoks)
 {
     if (!s.hd || !ntoks) {
-        errno = EINVAL;
         return NULL;
     }
 
@@ -179,7 +186,6 @@ struct string *splitch(const struct string s, char delim,
                     free(tokens[i].hd);
                 }
                 free(tokens);
-                errno = EINVAL;
                 return NULL;
             }
             char *token_buffer = calloc(token_length + 1, sizeof(char));
@@ -204,12 +210,23 @@ struct string *splitch(const struct string s, char delim,
     return tokens;
 }
 
-int lowercase(struct string *s) {
-    if (!s || !s->hd) return 1;
+// Sets S::HD to F(S::HD) in place, so it's like a map where
+// the out buffer is the same as the in buffer.
+static int rewrite(struct string *s, int (*f) (int)) {
+    assert(s && s->hd && "S or S->hd can't be NULL");
+    assert(f && "Map function F can't be NULL");
     for (int i = 0; i < s->length; i++) {
-        s->hd[i] = tolower(s->hd[i]);
+        s->hd[i] = f(s->hd[i]);
     }
     return 0;
+}
+
+int lowercase(struct string *s) {
+    return rewrite(s, tolower);
+}
+
+int uppercase(struct string *s) {
+    return rewrite(s, toupper);
 }
 
 int rmch(struct string *s, char ch) {
@@ -231,11 +248,28 @@ struct string lowercase_im(const struct string s) {
 
     out.length = s.length;
     out.hd = calloc(out.length + 1, sizeof(char));
-    if (!out.hd) {
+    if (!out.hd) { // ENOMEM
         return out;
     }
     memcpy(out.hd, s.hd, out.length + 1);
     if (lowercase(&out) != 0) {
+        free(out.hd);
+        return out;
+    }
+    return out;
+}
+
+struct string uppercase_im(const struct string s) {
+    assert(s.hd && "can't write out to a NULL S::HD");
+
+    struct string out = {0};
+    out.length = s.length;
+    out.hd = calloc(out.length + 1, sizeof(char));
+    if (!out.hd) { // ENOMEM
+        return out;
+    }
+    memcpy(out.hd, s.hd, out.length + 1);
+    if (uppercase(&out) != 0) {
         free(out.hd);
         return out;
     }

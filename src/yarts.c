@@ -124,7 +124,7 @@ typedef struct {
     /**
      * The columns for this row
      */
-    column_def **columns;
+    struct column_def **columns;
 
     /**
      * Number of COLUMNS entries
@@ -207,7 +207,7 @@ static Fetch *fetch_alloc(sqlite3 *db, int argc,
     sqlite3_str *s = sqlite3_str_new(db);
     sqlite3_str_appendall(s, first_line.hd);
     for (int i = 3; i < vtab->columns_len; i++) {
-        column_def *def = vtab->columns[i];
+        struct column_def *def = vtab->columns[i];
         const char *name = def->name.hd;
         const char *typename = def->typename.hd;
         sqlite3_str_appendf(s, "%s %s", def->name.hd, def->typename.hd);
@@ -418,7 +418,7 @@ static int xNext(sqlite3_vtab_cursor *cur0) {
 
 static void json_bool_result(
     sqlite3_context *pctx,
-    column_def *def,
+    struct column_def *def,
     yyjson_val *column_val
 ) {
     if (strncmp(def->typename.hd, "int", 3) == 0 || strncmp(def->typename.hd, "float", 5) == 0) {
@@ -467,7 +467,7 @@ static int xColumn(sqlite3_vtab_cursor *pcursor,
         return SQLITE_OK;
     }
 
-    column_def *def = vtab->columns[icol];
+    struct column_def *def = vtab->columns[icol];
     yyjson_val *val = yyjson_doc_get_root(cursor->next_doc);
 
     if (def->generated_always_as_len > 0) {

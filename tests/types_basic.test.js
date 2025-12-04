@@ -14,7 +14,7 @@ create virtual table todos using fetch (
 
 describe("Usual queries", () => {
     beforeAll(checkExtensionExists);
-    const db = new Database().loadExtension("./libyartssql");
+    const db = new Database().loadExtension("./libyarts");
     it("maps booleans to text", () => {
         const todos = db
             .exec(CREATE_TODOS_TABLE("text"))
